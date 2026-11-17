@@ -11,8 +11,14 @@ docs; this file is the context for continuing development.
   per-OS back-ends.
   - **Step 1 done (2026-11-17):** engine core + stub back-ends + `pcdump.exe` build with
     clang-cl, and `regress.sh` prints `ALL PASSED` on Windows 11. The Win32 branch of
-    `pc_platform.h` compiled and worked unchanged. **Next: step 2, WASAPI** (then D3D11VA,
-    then the WinUI 3 app), see `docs/PORTING_WINDOWS.md`.
+    `pc_platform.h` compiled and worked unchanged.
+  - **Step 2 (WASAPI) written 2026-11-17:** `platform/windows/audio_wasapi.c`, driven by
+    `pctest.exe devices|play` (tools/pcdump.c on the real back-end). Silent-media runs to the
+    Samsung: AC3 transcode + AC3 passthrough open exclusive IEC 61937 Dolby Digital (10 ms
+    buffer), PCM shared works, clock tracks real time. **The Samsung's HDMI endpoint refuses
+    the IEC 61937 DTS subtype** (EDID has no DTS), so DTS mode falls back to decoded PCM on
+    this PC. The user confirmed the amp showed Dolby Digital, with no noise.
+    **Next: device hot-plug (IMMNotificationClient), then D3D11VA, then the WinUI 3 app.**
   - **The Windows PC is connected the same way:** HDMI → Samsung TV → optical → AC3 amp.
     The user confirmed the testing rule below (silent files only) for it.
   - **Windows build (no PATH setup needed):**

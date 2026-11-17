@@ -53,7 +53,17 @@ Still open: zlib/bzlib in the Windows FFmpeg build (PNG cover art needs zlib).
    decode, AC3/DTS encode, IEC 61937 packing, channel mapping and passthrough all
    work on Windows before any device code exists.
 
-## Step 2 — WASAPI audio back-end (`platform/windows/audio_wasapi.c`)
+## Step 2 — WASAPI audio back-end (`platform/windows/audio_wasapi.c`) — WRITTEN 2026-11-17
+
+Implemented as below, with these decisions (see the file header):
+- **No PCM-container fallback** for bitstreams. If the endpoint refuses the IEC subtype
+  (the sink's EDID lacks the codec, e.g. the Samsung and DTS), `pcad_open` fails and the
+  engine plays decoded PCM. A sink that can't decode the codec may play it as noise.
+- `fmt->latency = 0`: `present_ns` comes from `IAudioClock::GetPosition`, which already
+  covers the buffer queue; adding `GetStreamLatency` would count it twice.
+- COM: `CoIncrementMTAUsage` once, so any thread may call in.
+- Test driver: `pctest.exe devices` / `pctest.exe play <silent media> [--dts] [--pcm] [--seconds N] [--debug]`.
+- Still to do: `IMMNotificationClient` device-change events surfaced to the app.
 
 Implement `pc_audio_device.h`. The macOS version (`platform/apple/audio_coreaudio.c`)
 is the reference for behaviour.
