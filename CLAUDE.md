@@ -38,6 +38,9 @@ docs; this file is the context for continuing development.
       `VideoRenderer.cs` (SwapChainPanel; NV12/P010 slices → RGB shader, BGRA upload),
       `Settings.cs` (same keys as the Mac app, JSON in %LOCALAPPDATA%\SurroundPlayer).
     - Build: `scripts\build_win.ps1 -App`. Debug log: `SURROUND_DEBUG=<file>`.
+    - **Share:** `scripts\build_win.ps1 -Package` → `build\SurroundPlayer-<ver>-windows-x64.zip`
+      (self-contained: .NET + Windows App SDK + engine; no VC++ runtime imports; nothing to
+      install). Unsigned, so SmartScreen asks once (More info → Run anyway).
     - Verified headless with silent media: H.264 D3D11VA at 24 fps presented, MPEG-4
       software/BGRA, AC3 passthrough + transcode, track advance, clean exit.
     - **Visualiser ported** (`Windows/SurroundPlayer/Visualizer/`): HLSL shaders, the 13
