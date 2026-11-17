@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds a slim, static, LGPL FFmpeg for arm64 and x86_64 into vendor/ffmpeg/<arch>.
 # Only what the player needs: all demuxers/decoders/parsers, the AC3 encoder,
-# the spdif (IEC 61937) muxer, VideoToolbox. Needs nasm (`brew install nasm`)
+# the AC3 and DTS (dca) encoders, the spdif (IEC 61937) muxer, VideoToolbox. Needs nasm (`brew install nasm`)
 # for the x86_64 assembly.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -22,9 +22,15 @@ if [ ! -f "$TARBALL" ]; then
 fi
 echo "$SHA256  $TARBALL" | shasum -a 256 -c -
 
+# Bump/extend this when the configure options change; it triggers a rebuild.
+OPTIONS="encoders=ac3,dca muxers=spdif v1"
+
 for ARCH in $ARCHS; do
     PREFIX="$ROOT/$ARCH"
-    if [ -f "$PREFIX/lib/libavformat.a" ]; then echo "ffmpeg $ARCH already built"; continue; fi
+    if [ -f "$PREFIX/lib/libavformat.a" ] && [ "$(cat "$PREFIX/.options" 2>/dev/null)" = "$OPTIONS" ]; then
+        echo "ffmpeg $ARCH already built"; continue
+    fi
+    rm -rf "$PREFIX"
     BUILD="$SRC_DIR/build-$ARCH"
     rm -rf "$BUILD"; mkdir -p "$BUILD"
     tar -xf "$TARBALL" -C "$BUILD" --strip-components 1
@@ -43,12 +49,13 @@ for ARCH in $ARCHS; do
         --disable-programs --disable-doc --disable-debug \
         --disable-avdevice --disable-avfilter --disable-network \
         --disable-autodetect --enable-videotoolbox --enable-zlib --enable-bzlib \
-        --disable-encoders --enable-encoder=ac3 \
+        --disable-encoders --enable-encoder=ac3,dca \
         --disable-muxers --enable-muxer=spdif \
         --disable-protocols --enable-protocol=file \
         --disable-indevs --disable-outdevs
     make -j"$JOBS"
     make install
+    echo "$OPTIONS" > "$PREFIX/.options"
     cd - >/dev/null
     rm -rf "$BUILD"
 done

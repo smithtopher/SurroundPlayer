@@ -1,6 +1,6 @@
 // pctest: command-line harness for PlayerCore.
 //   pctest devices
-//   pctest dump <media> <out.raw> [--pcm] [--stereo-ac3] [--bitrate N] [--no-passthrough]
+//   pctest dump <media> <out.raw> [--pcm] [--dts [--dts-bitrate 1509|754]] [--stereo-ac3] [--bitrate N] [--no-passthrough]
 //   pctest play <media> [--device UID] [--pcm] [--seconds N] [--seek S]
 import Foundation
 import PlayerCore
@@ -44,10 +44,12 @@ pc_player_set_callbacks(player, { c, _, _ in
 }, ctxPtr)
 
 var cfg = PCConfig()
-cfg.ac3_enabled = flag("--pcm") ? 0 : 1
+cfg.bitstream_enabled = flag("--pcm") ? 0 : 1
+cfg.bitstream_codec = Int32(flag("--dts") ? PC_CODEC_DTS.rawValue : PC_CODEC_AC3.rawValue)
+cfg.dts_bitrate_kbps = Int32(value("--dts-bitrate") ?? "1509") ?? 1509
 cfg.ac3_bitrate_kbps = Int32(value("--bitrate") ?? "640") ?? 640
-cfg.stereo_as_ac3 = flag("--stereo-ac3") ? 1 : 0
-cfg.ac3_passthrough = flag("--no-passthrough") ? 0 : 1
+cfg.stereo_bitstream = flag("--stereo-ac3") ? 1 : 0
+cfg.passthrough = flag("--no-passthrough") ? 0 : 1
 cfg.audio_track = Int32(value("--track") ?? "-1") ?? -1
 cfg.start_position = Double(value("--start") ?? "0") ?? 0
 

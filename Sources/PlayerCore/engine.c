@@ -214,7 +214,6 @@ static int fq_count(FrameQueue *f) {
 #define TAP_FRAMES 131072            // ~2.7 s at 48 kHz, power of two
 #define TAP_MARKERS 128
 #define TAP_RATE 48000
-#define AC3_FRAME 1536
 
 struct PCPlayer {
     PCVideoCallback vcb;
@@ -232,6 +231,10 @@ struct PCPlayer {
     PCOut *kept_out;                 // output kept open between files (receiver stays locked)
     char kept_uid[256];
     int kept_bitstream, out_bitstream;
+    int kept_burst;
+    enum AVCodecID bs_codec;         // codec being bitstreamed (AC3 / DTS)
+    int burst_bytes;                 // its IEC 61937 burst size
+    int enc_frame;                   // samples per encoded frame
     int mode;
     PCConfig cfg;
 
@@ -382,11 +385,11 @@ static int spdif_write_cb(void *opaque, const uint8_t *buf, int size) {
     return size;
 }
 
-static int spdif_open(PCPlayer *p, const AVChannelLayout *layout) {
+static int spdif_open(PCPlayer *p, enum AVCodecID codec, const AVChannelLayout *layout) {
     if (avformat_alloc_output_context2(&p->spdif, NULL, "spdif", NULL) < 0) return -1;
     AVStream *st = avformat_new_stream(p->spdif, NULL);
     st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
-    st->codecpar->codec_id = AV_CODEC_ID_AC3;
+    st->codecpar->codec_id = codec;
     st->codecpar->sample_rate = 48000;
     av_channel_layout_copy(&st->codecpar->ch_layout, layout);
     st->time_base = (AVRational){ 1, 48000 };
@@ -410,20 +413,20 @@ static void spdif_close(PCPlayer *p) {
     p->spdif = NULL;
 }
 
-// Wraps one AC3 frame into a 6144-byte burst in p->burst. Returns burst length.
+// Wraps one AC3/DTS frame into an IEC 61937 burst in p->burst. Returns its length.
 static int spdif_pack(PCPlayer *p, AVPacket *pkt) {
     p->burst_len = 0;
     pkt->stream_index = 0;
     pkt->pts = pkt->dts = p->spdif_ts;
-    pkt->duration = AC3_FRAME;
-    p->spdif_ts += AC3_FRAME;
+    pkt->duration = p->enc_frame;
+    p->spdif_ts += p->enc_frame;
     if (av_write_frame(p->spdif, pkt) < 0) return 0;
     avio_flush(p->spdif->pb);
     // keep the ring burst-aligned no matter what the muxer produced
-    int rem = p->burst_len % PC_AC3_BURST_BYTES;
+    int rem = p->burst_len % p->burst_bytes;
     if (rem) {
-        int pad = PC_AC3_BURST_BYTES - rem;
-        uint8_t zeros[PC_AC3_BURST_BYTES] = { 0 };
+        int pad = p->burst_bytes - rem;
+        uint8_t zeros[PC_MAX_BURST_BYTES] = { 0 };
         spdif_write_cb(p, zeros, pad);
     }
     return p->burst_len;
@@ -436,13 +439,14 @@ static int spdif_send(PCPlayer *p, AVPacket *pkt, double pts, int serial) {
 }
 
 // ---------------------------------------------------------------------------
-// AC3 encoder
+// AC3 / DTS encoders
 
-static AVCodecContext *open_ac3_encoder(const AVChannelLayout *layout, int bitrate_kbps) {
-    const AVCodec *c = avcodec_find_encoder_by_name("ac3");
-    if (!c) c = avcodec_find_encoder(AV_CODEC_ID_AC3);
+static AVCodecContext *open_bs_encoder(enum AVCodecID id, const AVChannelLayout *layout, int64_t bit_rate) {
+    const AVCodec *c = id == AV_CODEC_ID_AC3 ? avcodec_find_encoder_by_name("ac3") : avcodec_find_encoder_by_name("dca");
+    if (!c) c = avcodec_find_encoder(id);
     if (!c) return NULL;
     AVCodecContext *e = avcodec_alloc_context3(c);
+    e->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;   // FFmpeg's DTS encoder is flagged experimental
     e->sample_fmt = AV_SAMPLE_FMT_FLTP;
     const enum AVSampleFormat *fmts = NULL;
     int nf = 0;
@@ -453,7 +457,7 @@ static AVCodecContext *open_ac3_encoder(const AVChannelLayout *layout, int bitra
     }
     e->sample_rate = 48000;
     av_channel_layout_copy(&e->ch_layout, layout);
-    e->bit_rate = (int64_t)bitrate_kbps * 1000;
+    e->bit_rate = bit_rate;
     e->time_base = (AVRational){ 1, 48000 };
     if (avcodec_open2(e, c, NULL) < 0) { avcodec_free_context(&e); return NULL; }
     return e;
@@ -461,7 +465,7 @@ static AVCodecContext *open_ac3_encoder(const AVChannelLayout *layout, int bitra
 
 static AVFrame *alloc_enc_frame(AVCodecContext *e) {
     AVFrame *f = av_frame_alloc();
-    f->nb_samples = AC3_FRAME;
+    f->nb_samples = e->frame_size;
     f->format = e->sample_fmt;
     f->sample_rate = 48000;
     av_channel_layout_copy(&f->ch_layout, &e->ch_layout);
@@ -471,17 +475,20 @@ static AVFrame *alloc_enc_frame(AVCodecContext *e) {
 
 // Encode one frame of digital silence and hand its IEC 61937 burst to the output,
 // which plays it whenever there is no real data (pause, seek, underrun).
-static void make_silence_burst(PCPlayer *p, const AVChannelLayout *layout, int kbps) {
-    AVCodecContext *e = open_ac3_encoder(layout, kbps);
+static void make_silence_burst(PCPlayer *p, const AVChannelLayout *layout, int64_t bit_rate) {
+    AVCodecContext *e = open_bs_encoder(p->bs_codec, layout, bit_rate);
+    if (!e) {   // e.g. a passthrough layout the encoder doesn't do
+        AVChannelLayout l51 = AV_CHANNEL_LAYOUT_5POINT1;
+        e = open_bs_encoder(p->bs_codec, &l51, bit_rate);
+    }
     if (!e) return;
     AVFrame *f = alloc_enc_frame(e);
-    for (int ch = 0; ch < f->ch_layout.nb_channels && f->extended_data[ch]; ch++)
-        memset(f->extended_data[ch], 0, (size_t)AC3_FRAME * av_get_bytes_per_sample(e->sample_fmt));
+    av_samples_set_silence(f->extended_data, 0, f->nb_samples, f->ch_layout.nb_channels, e->sample_fmt);
     f->pts = 0;
     AVPacket *pkt = av_packet_alloc();
     if (avcodec_send_frame(e, f) >= 0 && avcodec_receive_packet(e, pkt) >= 0) {
         int n = spdif_pack(p, pkt);
-        if (n == PC_AC3_BURST_BYTES) pc_out_set_silence_burst(p->out, p->burst, n);
+        if (n == p->burst_bytes) pc_out_set_silence_burst(p->out, p->burst, n);
     }
     av_packet_free(&pkt);
     av_frame_free(&f);
@@ -657,13 +664,13 @@ static int deliver(PCPlayer *p, uint8_t **data, int n, int serial) {
     double head = p->next_pts - (double)av_audio_fifo_size(p->fifo) / p->out_rate;
     av_audio_fifo_write(p->fifo, (void **)data, n);
     p->next_pts += (double)n / p->out_rate;
-    while (av_audio_fifo_size(p->fifo) >= AC3_FRAME) {
+    while (av_audio_fifo_size(p->fifo) >= p->enc_frame) {
         av_frame_make_writable(p->eframe);
-        av_audio_fifo_read(p->fifo, (void **)p->eframe->data, AC3_FRAME);
+        av_audio_fifo_read(p->fifo, (void **)p->eframe->data, p->enc_frame);
         p->eframe->pts = p->enc_counter;
-        p->enc_counter += AC3_FRAME;
+        p->enc_counter += p->enc_frame;
         if (encode_and_send(p, p->eframe, head, serial) < 0) return -1;
-        head += (double)AC3_FRAME / p->out_rate;
+        head += (double)p->enc_frame / p->out_rate;
     }
     return 0;
 }
@@ -692,7 +699,7 @@ static int audio_frame(PCPlayer *p, AVFrame *f, int serial) {
 }
 
 static void audio_drain(PCPlayer *p, AVFrame *frame, int serial) {
-    if (p->mode != PC_MODE_AC3_PASSTHROUGH) {
+    if (p->mode != PC_MODE_PASSTHROUGH) {
         avcodec_send_packet(p->adec, NULL);
         while (avcodec_receive_frame(p->adec, frame) >= 0) {
             int r = audio_frame(p, frame, serial);
@@ -706,11 +713,11 @@ static void audio_drain(PCPlayer *p, AVFrame *frame, int serial) {
                 if (n > 0 && deliver(p, p->cvt, n, serial) < 0) return;
             }
         }
-        if (p->mode == PC_MODE_AC3_TRANSCODE) {
+        if (p->mode == PC_MODE_TRANSCODE) {
             int left = av_audio_fifo_size(p->fifo);
             if (left > 0) {
                 // pad the final partial AC3 frame with silence
-                int pad = AC3_FRAME - left;
+                int pad = p->enc_frame - left;
                 uint8_t **sil = NULL;
                 if (av_samples_alloc_array_and_samples(&sil, NULL, p->out_layout.nb_channels, pad, p->out_fmt, 0) >= 0) {
                     av_samples_set_silence(sil, 0, pad, p->out_layout.nb_channels, p->out_fmt);
@@ -743,7 +750,7 @@ static void *audio_thread(void *arg) {
         if (r == 0) { audio_drain(p, frame, serial); continue; }
         if (pserial != atomic_load(&p->aq.serial)) { av_packet_free(&pkt); continue; }
 
-        if (p->mode == PC_MODE_AC3_PASSTHROUGH) {
+        if (p->mode == PC_MODE_PASSTHROUGH) {
             double pts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts * av_q2d(st->time_base) - p->start_time : NAN;
             double target = atomic_load(&p->seek_target);
             if (isnan(target) || isnan(pts) || pts + 0.032 >= target) {
@@ -1058,12 +1065,13 @@ static void drop_kept_output(PCPlayer *p) {
     p->kept_out = NULL;
 }
 
-static PCOut *take_output(PCPlayer *p, int bitstream, char *oerr, int len) {
+static PCOut *take_output(PCPlayer *p, int bitstream, int burst, char *oerr, int len) {
     const PCConfig *cfg = &p->cfg;
     if (cfg->dump_path) return pc_out_open_file(cfg->dump_path, bitstream, 2, 48000, oerr, len);
     const char *uid = cfg->device_uid ? cfg->device_uid : "";
     if (p->kept_out) {
-        if (p->kept_bitstream == bitstream && strcmp(p->kept_uid, uid) == 0) {
+        // reuse only for the same device, mode and burst size (AC3 <-> DTS needs a fresh stream)
+        if (p->kept_bitstream == bitstream && (!bitstream || p->kept_burst == burst) && strcmp(p->kept_uid, uid) == 0) {
             PCOut *o = p->kept_out;
             p->kept_out = NULL;
             pc_out_flush(o);
@@ -1071,7 +1079,9 @@ static PCOut *take_output(PCPlayer *p, int bitstream, char *oerr, int len) {
         }
         drop_kept_output(p);
     }
-    return pc_out_open(uid, bitstream, oerr, len);
+    PCOut *o = pc_out_open(uid, bitstream, oerr, len);
+    if (o && bitstream) pc_out_set_burst_size(o, burst);
+    return o;
 }
 
 static int setup_audio(PCPlayer *p, char *err, int errlen) {
@@ -1079,16 +1089,38 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
     AVCodecParameters *par = st->codecpar;
     const PCConfig *cfg = &p->cfg;
     int src_ch = par->ch_layout.nb_channels;
-    int kbps = cfg->ac3_bitrate_kbps > 0 ? cfg->ac3_bitrate_kbps : 640;
-    if (kbps > 640) kbps = 640;
+    int dts = cfg->bitstream_codec == PC_CODEC_DTS;
+    int64_t ac3_rate = (int64_t)(cfg->ac3_bitrate_kbps > 0 ? FFMIN(cfg->ac3_bitrate_kbps, 640) : 640) * 1000;
+    // DTS nominal 1536/768 kb/s are really 1509.75/754.5 kb/s; both fit a 2048-byte burst
+    int64_t dts_rate = cfg->dts_bitrate_kbps > 0 && cfg->dts_bitrate_kbps < 1000 ? 754500 : 1509750;
 
+    // Decide: PCM, pass the source's own compressed frames through, or transcode.
     int mode = PC_MODE_PCM;
-    if (cfg->ac3_enabled) {
-        if (cfg->ac3_passthrough && par->codec_id == AV_CODEC_ID_AC3 && par->sample_rate == 48000) mode = PC_MODE_AC3_PASSTHROUGH;
-        else if (src_ch > 2 || cfg->stereo_as_ac3) mode = PC_MODE_AC3_TRANSCODE;
+    if (cfg->bitstream_enabled) {
+        int native_ac3 = par->codec_id == AV_CODEC_ID_AC3 && par->sample_rate == 48000;
+        // DTS core (incl. the core of DTS-HD, the packer strips extensions); not DTS Express (no core)
+        int native_dts = dts && par->codec_id == AV_CODEC_ID_DTS && par->sample_rate == 48000 &&
+                         par->profile != AV_PROFILE_DTS_EXPRESS;
+        if (cfg->passthrough && (native_ac3 || native_dts)) {
+            mode = PC_MODE_PASSTHROUGH;
+            p->bs_codec = par->codec_id;
+        } else if (src_ch > 2 || cfg->stereo_bitstream) {
+            mode = PC_MODE_TRANSCODE;
+            p->bs_codec = dts ? AV_CODEC_ID_DTS : AV_CODEC_ID_AC3;
+        }
+    }
+    if (mode != PC_MODE_PCM) {
+        if (p->bs_codec == AV_CODEC_ID_AC3) p->enc_frame = 1536;
+        else p->enc_frame = mode == PC_MODE_PASSTHROUGH && par->frame_size > 0 ? par->frame_size : 512;
+        p->burst_bytes = p->enc_frame * 4;
+        if (p->burst_bytes > PC_MAX_BURST_BYTES) {   // unusually long DTS frames: re-encode instead
+            mode = PC_MODE_TRANSCODE;
+            p->enc_frame = 512;
+            p->burst_bytes = 2048;
+        }
     }
 
-    if (mode == PC_MODE_AC3_PASSTHROUGH) {
+    if (mode == PC_MODE_PASSTHROUGH) {
         open_decoder(st, &p->adec, NULL);   // optional: only feeds the visualiser
     } else if (open_decoder(st, &p->adec, NULL) < 0) {
         snprintf(err, errlen, "No decoder for audio codec %s", avcodec_get_name(par->codec_id));
@@ -1098,9 +1130,9 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
     char oerr[256] = "";
     char fallback[300] = "";
     if (mode != PC_MODE_PCM) {
-        p->out = take_output(p, 1, oerr, sizeof(oerr));
+        p->out = take_output(p, 1, p->burst_bytes, oerr, sizeof(oerr));
         if (!p->out) {
-            if (mode == PC_MODE_AC3_PASSTHROUGH && !p->adec) {
+            if (mode == PC_MODE_PASSTHROUGH && !p->adec) {
                 snprintf(err, errlen, "Bitstream output failed (%s) and no decoder available", oerr);
                 return -1;
             }
@@ -1109,7 +1141,7 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
         }
     }
     if (mode == PC_MODE_PCM) {
-        p->out = take_output(p, 0, oerr, sizeof(oerr));
+        p->out = take_output(p, 0, 0, oerr, sizeof(oerr));
         if (!p->out) { snprintf(err, errlen, "Audio output failed: %s", oerr); return -1; }
     }
     p->mode = mode;
@@ -1125,32 +1157,38 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
         p->out_fmt = AV_SAMPLE_FMT_FLT;
         snprintf(p->info.output, sizeof(p->info.output), "PCM %d ch %d Hz -> %s%s", ch, p->out_rate, pc_out_description(p->out), fallback);
     } else {
-        if (mode == PC_MODE_AC3_PASSTHROUGH) {
+        const char *cname = p->bs_codec == AV_CODEC_ID_DTS ? "DTS" : "Dolby Digital";
+        snprintf(p->info.bitstream_codec, sizeof(p->info.bitstream_codec), "%s", cname);
+        int64_t rate = p->bs_codec == AV_CODEC_ID_DTS ? dts_rate : ac3_rate;
+        if (mode == PC_MODE_PASSTHROUGH) {
             av_channel_layout_copy(&enc_layout, &par->ch_layout);
         } else {
             enc_layout = src_ch > 2 ? (AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1 : (AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO;
-            p->aenc = open_ac3_encoder(&enc_layout, src_ch > 2 ? kbps : (kbps > 320 ? 320 : kbps));
-            if (!p->aenc) {
+            if (src_ch <= 2 && p->bs_codec == AV_CODEC_ID_AC3) rate = FFMIN(rate, 320000);
+            p->aenc = open_bs_encoder(p->bs_codec, &enc_layout, rate);
+            if (!p->aenc && p->bs_codec == AV_CODEC_ID_AC3) {
                 enc_layout = (AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1_BACK;
-                p->aenc = open_ac3_encoder(&enc_layout, kbps);
+                p->aenc = open_bs_encoder(p->bs_codec, &enc_layout, rate);
             }
-            if (!p->aenc) { snprintf(err, errlen, "Could not open the AC3 encoder"); return -1; }
+            if (!p->aenc) { snprintf(err, errlen, "Could not open the %s encoder", cname); return -1; }
+            p->enc_frame = p->aenc->frame_size;
             p->out_fmt = p->aenc->sample_fmt;
             p->out_rate = 48000;
             av_channel_layout_copy(&p->out_layout, &p->aenc->ch_layout);
-            p->fifo = av_audio_fifo_alloc(p->out_fmt, p->out_layout.nb_channels, AC3_FRAME * 4);
+            p->fifo = av_audio_fifo_alloc(p->out_fmt, p->out_layout.nb_channels, p->enc_frame * 4);
             p->eframe = alloc_enc_frame(p->aenc);
             p->epkt = av_packet_alloc();
         }
-        if (spdif_open(p, &enc_layout) < 0) { snprintf(err, errlen, "Could not open the IEC 61937 packer"); return -1; }
-        make_silence_burst(p, &enc_layout, mode == PC_MODE_AC3_PASSTHROUGH ? 448 : (int)(p->aenc->bit_rate / 1000));
+        if (spdif_open(p, p->bs_codec, &enc_layout) < 0) { snprintf(err, errlen, "Could not open the IEC 61937 packer"); return -1; }
+        make_silence_burst(p, &enc_layout, p->bs_codec == AV_CODEC_ID_AC3 && mode == PC_MODE_PASSTHROUGH ? 448000 : rate);
         char lay[64] = "";
         av_channel_layout_describe(&enc_layout, lay, sizeof(lay));
-        if (mode == PC_MODE_AC3_PASSTHROUGH)
-            snprintf(p->info.output, sizeof(p->info.output), "Dolby Digital %s %lld kb/s passthrough, IEC 61937 -> %s",
-                     lay, (long long)(par->bit_rate / 1000), pc_out_description(p->out));
+        if (mode == PC_MODE_PASSTHROUGH)
+            snprintf(p->info.output, sizeof(p->info.output), "%s %s %lld kb/s passthrough%s, IEC 61937 -> %s", cname,
+                     lay, (long long)(par->bit_rate / 1000), p->bs_codec == AV_CODEC_ID_DTS && par->codec_id == AV_CODEC_ID_DTS &&
+                     par->profile != AV_PROFILE_DTS ? " (core)" : "", pc_out_description(p->out));
         else
-            snprintf(p->info.output, sizeof(p->info.output), "Dolby Digital %s %lld kb/s (transcoded), IEC 61937 -> %s",
+            snprintf(p->info.output, sizeof(p->info.output), "%s %s %lld kb/s (transcoded), IEC 61937 -> %s", cname,
                      lay, (long long)(p->aenc->bit_rate / 1000), pc_out_description(p->out));
         av_channel_layout_uninit(&enc_layout);
     }
@@ -1310,6 +1348,7 @@ static void close_internal(PCPlayer *p, int keep_out) {
         drop_kept_output(p);
         p->kept_out = p->out;
         p->kept_bitstream = p->out_bitstream;
+        p->kept_burst = p->burst_bytes;
         snprintf(p->kept_uid, sizeof(p->kept_uid), "%s", p->cfg.device_uid ? p->cfg.device_uid : "");
     } else {
         pc_out_close(p->out);

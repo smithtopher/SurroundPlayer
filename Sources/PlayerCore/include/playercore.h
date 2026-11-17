@@ -1,5 +1,5 @@
 // PlayerCore: FFmpeg-based media engine with a CoreAudio HAL output that can
-// bitstream Dolby Digital (AC3) as IEC 61937 in exclusive (hog) mode, the
+// bitstream Dolby Digital (AC3) or DTS as IEC 61937 in exclusive (hog) mode, the
 // macOS equivalent of Kodi's WASAPI exclusive passthrough on Windows.
 #ifndef PLAYERCORE_H
 #define PLAYERCORE_H
@@ -15,9 +15,14 @@ typedef struct PCPlayer PCPlayer;
 
 typedef enum {
     PC_MODE_PCM = 0,             // decoded PCM, shared (mixable) device access
-    PC_MODE_AC3_TRANSCODE = 1,   // decode -> AC3 encode -> IEC 61937, exclusive
-    PC_MODE_AC3_PASSTHROUGH = 2, // source AC3 packets -> IEC 61937, exclusive
+    PC_MODE_TRANSCODE = 1,       // decode -> AC3/DTS encode -> IEC 61937, exclusive
+    PC_MODE_PASSTHROUGH = 2,     // source AC3/DTS packets -> IEC 61937, exclusive
 } PCOutputMode;
+
+typedef enum {
+    PC_CODEC_AC3 = 0,
+    PC_CODEC_DTS = 1,
+} PCBitstreamCodec;
 
 typedef enum {
     PC_EVENT_EOF = 1,
@@ -26,10 +31,12 @@ typedef enum {
 
 typedef struct {
     const char *device_uid;     // CoreAudio device UID, NULL/"" = system default output
-    int ac3_enabled;            // Dolby Digital bitstream output allowed
+    int bitstream_enabled;      // compressed (IEC 61937) output allowed on digital devices
+    int bitstream_codec;        // PC_CODEC_AC3 or PC_CODEC_DTS: what surround is transcoded to
     int ac3_bitrate_kbps;       // 384 / 448 / 640
-    int stereo_as_ac3;          // also encode stereo sources (keeps receiver locked to DD)
-    int ac3_passthrough;        // pass native AC3 tracks through untouched
+    int dts_bitrate_kbps;       // 1509 (full rate) / 754 (half rate)
+    int stereo_bitstream;       // also encode stereo sources (keeps the receiver locked)
+    int passthrough;            // pass native AC3 (and, in DTS mode, DTS core) tracks through untouched
     int audio_track;            // index into the file's audio tracks, -1 = best
     double start_position;      // seconds
     double av_offset;           // seconds; >0 delays video (compensates receiver decode latency)
@@ -46,6 +53,7 @@ typedef struct {
     double duration;
     int has_video;
     int mode;                   // PCOutputMode
+    char bitstream_codec[32];   // "Dolby Digital" / "DTS" when bitstreaming
     int video_width, video_height;
 } PCInfo;
 

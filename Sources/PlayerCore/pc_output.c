@@ -53,7 +53,8 @@ struct PCOut {
     _Atomic int paused, running;
     // bitstream burst state (IOProc only)
     int bs_state, bs_phase;
-    uint8_t silence[PC_AC3_BURST_BYTES];
+    uint8_t silence[PC_MAX_BURST_BYTES];
+    int burst;                      // bitstream burst size in bytes
     _Atomic int have_silence;
     // clock record, written by IOProc (seqlock)
     _Atomic uint32_t seq;
@@ -335,14 +336,14 @@ static OSStatus ioproc(AudioObjectID dev, const AudioTimeStamp *now, const Audio
         while (done < frames) {
             int left = frames - done;
             if (o->bs_state == BS_SILENCE) {
-                int n = (PC_AC3_BURST_BYTES - o->bs_phase) / 4;
+                int n = (o->burst - o->bs_phase) / 4;
                 if (n > left) n = left;
                 emit_s16(o, dst + done * vbpf, (const int16_t *)(o->silence + o->bs_phase), n);
                 o->bs_phase += n * 4; done += n;
                 if (first_real_frame >= 0) real_contig = 0;
-                if (o->bs_phase >= PC_AC3_BURST_BYTES) { o->bs_phase = 0; o->bs_state = BS_BOUNDARY; }
+                if (o->bs_phase >= o->burst) { o->bs_phase = 0; o->bs_state = BS_BOUNDARY; }
             } else if (o->bs_state == BS_REAL) {
-                int n = (PC_AC3_BURST_BYTES - o->bs_phase) / 4;
+                int n = (o->burst - o->bs_phase) / 4;
                 int avail = (int)((w - r) / 4);
                 if (n > left) n = left;
                 if (n > avail) n = avail;
@@ -351,9 +352,9 @@ static OSStatus ioproc(AudioObjectID dev, const AudioTimeStamp *now, const Audio
                 if (first_real_frame < 0) { first_real_frame = done; first_real_pos = r; }
                 if (real_contig) real_len += n * 4;
                 r += n * 4; o->bs_phase += n * 4; done += n;
-                if (o->bs_phase >= PC_AC3_BURST_BYTES) { o->bs_phase = 0; o->bs_state = BS_BOUNDARY; }
+                if (o->bs_phase >= o->burst) { o->bs_phase = 0; o->bs_state = BS_BOUNDARY; }
             } else {
-                if (!paused && w - r >= PC_AC3_BURST_BYTES) {
+                if (!paused && w - r >= o->burst) {
                     o->bs_state = BS_REAL; o->bs_phase = 0;
                 } else if (atomic_load_explicit(&o->have_silence, memory_order_acquire)) {
                     o->bs_state = BS_SILENCE; o->bs_phase = 0;
@@ -392,12 +393,13 @@ static PCOut *alloc_out(void) {
     pthread_mutex_init(&o->mlock, NULL);
     o->stream_buffer = 0;
     o->frozen = NAN;
+    o->burst = PC_AC3_BURST_BYTES;
     return o;
 }
 
 static void alloc_ring(PCOut *o, double seconds) {
     int64_t cap = (int64_t)(o->bps * seconds);
-    if (o->bitstream) cap = (cap / PC_AC3_BURST_BYTES + 1) * PC_AC3_BURST_BYTES;
+    if (o->bitstream) cap = (cap / 24576 + 1) * 24576;   // multiple of every burst size
     else cap -= cap % o->ring_bpf;
     o->cap = cap;
     o->ring = calloc(1, (size_t)cap);
@@ -585,9 +587,18 @@ int pc_out_channels(PCOut *o) { return o->channels; }
 double pc_out_bytes_per_sec(PCOut *o) { return o->bps; }
 const char *pc_out_description(PCOut *o) { return o->desc; }
 
+void pc_out_set_burst_size(PCOut *o, int bytes) {
+    if (bytes <= 0 || bytes > PC_MAX_BURST_BYTES || bytes % 4 || atomic_load(&o->running)) return;
+    if (bytes != o->burst) atomic_store(&o->have_silence, 0);
+    o->burst = bytes;
+}
+
+int pc_out_burst_size(PCOut *o) { return o->burst; }
+
 void pc_out_set_silence_burst(PCOut *o, const uint8_t *burst, int len) {
-    if (len != PC_AC3_BURST_BYTES) return;
-    memcpy(o->silence, burst, PC_AC3_BURST_BYTES);
+    // set once per output; a reused output keeps the identical burst it already has
+    if (len != o->burst || atomic_load(&o->have_silence)) return;
+    memcpy(o->silence, burst, (size_t)len);
     atomic_store_explicit(&o->have_silence, 1, memory_order_release);
 }
 

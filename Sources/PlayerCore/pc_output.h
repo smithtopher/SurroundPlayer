@@ -4,8 +4,10 @@
 #include <stdint.h>
 #include <stdatomic.h>
 
-// IEC 61937 burst for one AC3 frame: 1536 samples * 2 ch * 16 bit.
+// IEC 61937 burst = one compressed frame padded to its repetition period:
+// AC3 1536 samples * 4 bytes = 6144; DTS 512 samples * 4 = 2048.
 #define PC_AC3_BURST_BYTES 6144
+#define PC_MAX_BURST_BYTES 8192
 
 typedef struct PCOut PCOut;
 
@@ -23,7 +25,11 @@ int pc_out_channels(PCOut *o);          // ring channels
 double pc_out_bytes_per_sec(PCOut *o);
 const char *pc_out_description(PCOut *o);
 
-// Bitstream only: a pre-packed IEC 61937 burst of AC3 silence, played while
+// Bitstream only. The burst size the stream is written in (writes are always whole
+// bursts); set before pc_out_start. Defaults to the AC3 size.
+void pc_out_set_burst_size(PCOut *o, int bytes);
+int pc_out_burst_size(PCOut *o);
+// A pre-packed IEC 61937 burst of encoded silence (len = burst size), played while
 // paused/underrunning so the receiver stays locked (Kodi's "keep alive").
 void pc_out_set_silence_burst(PCOut *o, const uint8_t *burst, int len);
 

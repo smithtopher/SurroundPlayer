@@ -1,8 +1,8 @@
 # Surround Player
 
 A native macOS music/video player (SwiftUI + an FFmpeg/CoreAudio engine in C) that
-sends surround sound to an HDMI TV as a **Dolby Digital (AC3) bitstream**, so the TV
-can forward it over optical (S/PDIF) to an AC3-capable amp.
+sends surround sound to an HDMI TV as a **Dolby Digital (AC3) or DTS bitstream**, so the
+TV can forward it over optical (S/PDIF) to a surround amp.
 
 ## Build & run
 
@@ -21,8 +21,8 @@ Only the Command Line Tools are needed, not Xcode. `build_app.sh` produces:
 | `build/universal/Surround Player.app` + `build/SurroundPlayer-<ver>-universal.zip` | both |
 
 FFmpeg is compiled statically by `scripts/build_ffmpeg.sh` into `vendor/ffmpeg/<arch>`.
-It's a slim LGPL build: every demuxer and decoder, plus only the AC3 encoder and the
-spdif muxer. So the apps depend on nothing outside macOS (the build script checks this
+It's a slim LGPL build: every demuxer and decoder, plus only the AC3 and DTS encoders
+and the spdif muxer. So the apps depend on nothing outside macOS (the build script checks this
 with `otool`). `ARCHS=arm64 ./scripts/build_app.sh` builds a single architecture. Plain
 `swift build` uses the vendored FFmpeg if it has been built, otherwise Homebrew's.
 
@@ -89,19 +89,31 @@ TV setup: set the TV's digital/optical audio output format to **Pass-through**
 | Exclusive-mode stream | `kAudioDevicePropertyHogMode` (exclusive ownership) |
 | No Windows mixer / APO processing | `kAudioDevicePropertySupportsMixing = 0` |
 | `WAVEFORMATEXTENSIBLE` IEC61937 AC3 subtype, 2ch 48 kHz | physical format `cac3` (digital AC3) if offered, else 2ch 16-bit 48 kHz integer LPCM |
-| ActiveAE "Dolby Digital transcoding" (`ac3` encoder) | FFmpeg `ac3` encoder, 5.1, 384/448/640 kb/s |
-| `CAEPackIEC61937` | FFmpeg `spdif` muxer → 6144-byte IEC 61937 bursts |
-| Keep-alive silence while paused | AC3-encoded silence bursts while paused, seeking or between tracks |
-| Sink kept open across tracks | Output reused when the next file needs the same device and mode |
+| ActiveAE "Dolby Digital transcoding" (`ac3` encoder) | FFmpeg `ac3` encoder (5.1, up to 640 kb/s), or `dca` for DTS (5.1, 1509 kb/s) |
+| `CAEPackIEC61937` | FFmpeg `spdif` muxer → IEC 61937 bursts (AC3 6144 bytes, DTS 2048 bytes) |
+| Keep-alive silence while paused | silence encoded in the stream's codec, sent while paused, seeking or between tracks |
+| Sink kept open across tracks | Output reused when the next file needs the same device, mode and codec |
 
-Per file:
-- **Multichannel sources** (E-AC3, DTS, TrueHD, AAC, FLAC, PCM…): decode → resample to 48 kHz →
-  downmix to 5.1 when needed → AC3 encode → IEC 61937 → exclusive output.
-- **Native 48 kHz AC3 tracks**: packets go straight to IEC 61937, bit-for-bit untouched.
-- **Stereo sources**: shared-mode PCM by default. Turn on "Also encode stereo sources as
-  Dolby Digital" if your amp drops audio when switching between PCM and DD.
+Per file, with **Settings → Transcode surround to** set to Dolby Digital (default) or DTS:
+- **Multichannel sources** (E-AC3, DTS-HD, TrueHD, AAC, FLAC, PCM…): decode → resample to 48 kHz →
+  downmix to 5.1 when needed → encode → IEC 61937 → exclusive output.
+  - Dolby Digital: AC3 at 384/448/640 kb/s, in 6144-byte bursts.
+  - DTS: DTS core at 1509 (full rate) or 754 kb/s, in 2048-byte type I bursts. FFmpeg's DTS
+    encoder is marked experimental and is less refined than its AC3 encoder. It also
+    puts out LFE about 3 dB lower than its input (plain `ffmpeg -c:a dca` does the same).
+- **Native tracks pass through bit-for-bit untouched** (if the passthrough option is on):
+  - 48 kHz AC3, in either mode.
+  - In DTS mode, also 48 kHz DTS, plus the core of DTS-HD MA/HRA. The packer strips the
+    HD extension, since optical can only carry the core. DTS Express has no core, so it
+    is transcoded.
+  - In Dolby Digital mode, DTS tracks are transcoded to AC3, in case the amp can't decode DTS.
+- **Stereo sources**: shared-mode PCM by default. Turn on "Also encode stereo sources" if
+  your amp drops audio when switching between PCM and a bitstream.
 - **Non-digital outputs** (speakers, headphones, Bluetooth): the engine refuses to bitstream
   and plays PCM, because IEC 61937 data played as PCM is loud noise.
+
+Some TVs don't forward DTS over optical, even in pass-through mode. If the amp goes
+silent in DTS mode, switch back to Dolby Digital.
 
 Video is decoded with VideoToolbox where possible and shown through
 `AVSampleBufferDisplayLayer`, timed against the audio device clock. The clock is
@@ -127,7 +139,7 @@ scripts/make_icns.sh       icon.png -> Resources/AppIcon.icns
 ```sh
 swift build --product pctest
 .build/debug/pctest devices                       # lists outputs; ac3fmt=1 means a digital AC3 format is offered
-.build/debug/pctest dump movie.mkv out.spdif      # writes the exact IEC 61937 stream to a file
+.build/debug/pctest dump movie.mkv out.spdif [--dts]  # writes the exact IEC 61937 stream to a file
 ffprobe -f spdif out.spdif                        # -> ac3, 48000 Hz, 5.1, 640 kb/s
 .build/debug/pctest play movie.mkv --device <UID> --debug
 ```

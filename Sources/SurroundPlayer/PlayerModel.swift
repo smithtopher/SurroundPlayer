@@ -93,6 +93,14 @@ final class PlayerModel: ObservableObject {
     @Published var ac3Bitrate: Int = defaults.object(forKey: "ac3Bitrate") as? Int ?? 640 {
         didSet { Self.defaults.set(ac3Bitrate, forKey: "ac3Bitrate"); settingsChanged() }
     }
+    /// 0 = Dolby Digital (AC3), 1 = DTS
+    @Published var bitstreamCodec: Int = defaults.object(forKey: "bitstreamCodec") as? Int ?? 0 {
+        didSet { Self.defaults.set(bitstreamCodec, forKey: "bitstreamCodec"); settingsChanged() }
+    }
+    @Published var dtsBitrate: Int = defaults.object(forKey: "dtsBitrate") as? Int ?? 1509 {
+        didSet { Self.defaults.set(dtsBitrate, forKey: "dtsBitrate"); settingsChanged() }
+    }
+    @Published var bitstreamCodecName = ""
     @Published var ac3Passthrough: Bool = defaults.object(forKey: "ac3Passthrough") as? Bool ?? true {
         didSet { Self.defaults.set(ac3Passthrough, forKey: "ac3Passthrough"); settingsChanged() }
     }
@@ -368,10 +376,12 @@ final class PlayerModel: ObservableObject {
         errorMessage = nil
 
         var cfg = PCConfig()
-        cfg.ac3_enabled = ac3Enabled ? 1 : 0
+        cfg.bitstream_enabled = ac3Enabled ? 1 : 0
+        cfg.bitstream_codec = Int32(bitstreamCodec == 1 ? PC_CODEC_DTS.rawValue : PC_CODEC_AC3.rawValue)
+        cfg.dts_bitrate_kbps = Int32(dtsBitrate)
         cfg.ac3_bitrate_kbps = Int32(ac3Bitrate)
-        cfg.ac3_passthrough = ac3Passthrough ? 1 : 0
-        cfg.stereo_as_ac3 = stereoAsAC3 ? 1 : 0
+        cfg.passthrough = ac3Passthrough ? 1 : 0
+        cfg.stereo_bitstream = stereoAsAC3 ? 1 : 0
         cfg.audio_track = Int32(audioTrack)
         cfg.start_position = start
         cfg.av_offset = avOffsetMs / 1000
@@ -477,7 +487,7 @@ final class PlayerModel: ObservableObject {
 
     private func clearInfo() {
         title = ""; artist = ""; album = ""; sourceAudio = ""; outputDescription = ""; videoDescription = ""
-        outputMode = -1; hasVideo = false; artwork = nil; audioTracks = []; currentAudioTrack = -1; duration = 0
+        outputMode = -1; bitstreamCodecName = ""; hasVideo = false; artwork = nil; audioTracks = []; currentAudioTrack = -1; duration = 0
     }
 
     private func loadInfo(track: Track) {
@@ -490,6 +500,7 @@ final class PlayerModel: ObservableObject {
         outputDescription = cString(info.output)
         videoDescription = cString(info.video)
         outputMode = info.mode
+        bitstreamCodecName = cString(info.bitstream_codec)
         hasVideo = info.has_video != 0
         duration = info.duration
         audioTracks = (0..<pc_player_audio_track_count(player)).map { i in
@@ -524,5 +535,5 @@ final class PlayerModel: ObservableObject {
         }
     }
 
-    var isBitstreaming: Bool { outputMode == Int32(PC_MODE_AC3_TRANSCODE.rawValue) || outputMode == Int32(PC_MODE_AC3_PASSTHROUGH.rawValue) }
+    var isBitstreaming: Bool { outputMode == Int32(PC_MODE_TRANSCODE.rawValue) || outputMode == Int32(PC_MODE_PASSTHROUGH.rawValue) }
 }
