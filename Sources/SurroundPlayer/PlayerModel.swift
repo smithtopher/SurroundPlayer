@@ -8,6 +8,18 @@ struct Track: Identifiable, Hashable {
     let id = UUID()
     let url: URL
     var name: String { url.deletingPathExtension().lastPathComponent }
+    /// Parent folder, e.g. the album folder in an Artist/Album/Track library.
+    var folder: String { url.deletingLastPathComponent().lastPathComponent }
+    /// Lowercased, diacritic-folded text the sidebar search matches against.
+    let searchText: String
+
+    init(url: URL) {
+        self.url = url
+        let parts = url.deletingPathExtension().pathComponents.suffix(4).joined(separator: " ")
+        searchText = parts.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+    }
+
+    func matches(_ terms: [String]) -> Bool { terms.allSatisfy { searchText.contains($0) } }
 }
 
 struct AudioDevice: Identifiable, Hashable {
@@ -36,7 +48,7 @@ private final class EngineBridge {
 final class PlayerModel: ObservableObject {
     static let shared = PlayerModel()
 
-    static let mediaExtensions: Set<String> = [
+    nonisolated static let mediaExtensions: Set<String> = [
         "mp3", "m4a", "aac", "flac", "wav", "aif", "aiff", "alac", "ogg", "opus", "wma", "ac3", "eac3", "dts", "mka", "ape", "wv", "dsf",
         "mp4", "m4v", "mkv", "mov", "avi", "webm", "ts", "m2ts", "mts", "wmv", "mpg", "mpeg", "vob", "flv",
     ]
@@ -185,22 +197,44 @@ final class PlayerModel: ObservableObject {
         if panel.runModal() == .OK { add(urls: panel.urls, playFirst: currentIndex == nil || !isPlaying) }
     }
 
-    func add(urls: [URL], playFirst: Bool) {
+    @Published var isScanning = false
+
+    /// Adds files and folders (folders are scanned recursively, off the main thread).
+    /// `at` inserts at a playlist position (e.g. a drop between rows); nil appends.
+    func add(urls: [URL], playFirst: Bool, at insertIndex: Int? = nil) {
+        isScanning = true
+        Task.detached(priority: .userInitiated) {
+            let files = Self.expand(urls)
+            await MainActor.run {
+                self.isScanning = false
+                guard !files.isEmpty else { return }
+                let at = min(max(insertIndex ?? self.playlist.count, 0), self.playlist.count)
+                let currentID = self.currentIndex.map { self.playlist[$0].id }
+                self.playlist.insert(contentsOf: files.map { Track(url: $0) }, at: at)
+                self.currentIndex = currentID.flatMap { id in self.playlist.firstIndex { $0.id == id } }
+                if playFirst { self.play(index: at) }
+            }
+        }
+    }
+
+    nonisolated static func expand(_ urls: [URL]) -> [URL] {
         var files: [URL] = []
         for url in urls {
             var isDir: ObjCBool = false
-            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
-                let en = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
-                let found = (en?.allObjects as? [URL] ?? []).filter { Self.mediaExtensions.contains($0.pathExtension.lowercased()) }
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { continue }
+            if isDir.boolValue {
+                let en = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil,
+                                                        options: [.skipsHiddenFiles, .skipsPackageDescendants])
+                var found: [URL] = []
+                while let f = en?.nextObject() as? URL {
+                    if mediaExtensions.contains(f.pathExtension.lowercased()) { found.append(f) }
+                }
                 files += found.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
             } else {
                 files.append(url)
             }
         }
-        guard !files.isEmpty else { return }
-        let firstNew = playlist.count
-        playlist += files.map { Track(url: $0) }
-        if playFirst { play(index: firstNew) }
+        return files
     }
 
     func remove(ids: Set<Track.ID>) {
@@ -333,7 +367,7 @@ final class PlayerModel: ObservableObject {
         if Self.debug {
             debugTicks += 1
             if debugTicks % 5 == 0 {
-                FileHandle.standardError.write("[app] \(title) pos=\(String(format: "%.2f", position))/\(String(format: "%.1f", duration)) playing=\(isPlaying) mode=\(outputMode) | \(outputDescription) | video: \(videoDescription)\n".data(using: .utf8)!)
+                FileHandle.standardError.write("[app] items=\(playlist.count) \(title) pos=\(String(format: "%.2f", position))/\(String(format: "%.1f", duration)) playing=\(isPlaying) mode=\(outputMode) | \(outputDescription) | video: \(videoDescription)\n".data(using: .utf8)!)
             }
         }
     }

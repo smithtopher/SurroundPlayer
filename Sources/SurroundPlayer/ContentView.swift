@@ -239,47 +239,122 @@ struct DevicePicker: View {
 
 struct PlaylistView: View {
     @EnvironmentObject var model: PlayerModel
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
+
+    private var terms: [String] {
+        query.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .split(whereSeparator: \.isWhitespace).map(String.init)
+    }
+
+    /// (index in the full playlist, track) for rows that match the search.
+    private var rows: [(index: Int, track: Track)] {
+        let t = terms
+        return model.playlist.enumerated()
+            .filter { t.isEmpty || $0.element.matches(t) }
+            .map { (index: $0.offset, track: $0.element) }
+    }
 
     var body: some View {
+        let rows = self.rows
+        let filtering = !terms.isEmpty
         VStack(spacing: 0) {
+            searchField
+            Divider()
             List(selection: $model.selection) {
-                ForEach(Array(model.playlist.enumerated()), id: \.element.id) { i, track in
-                    HStack(spacing: 6) {
-                        Image(systemName: model.currentIndex == i ? (model.isPlaying ? "speaker.wave.2.fill" : "speaker.fill") : "")
-                            .frame(width: 16)
-                            .foregroundStyle(Color.accentColor)
-                        Text(track.name).lineLimit(1)
-                        Spacer()
-                        Text(track.url.pathExtension.uppercased()).font(.caption2).foregroundStyle(.secondary)
-                    }
-                    .tag(track.id)
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 2) { model.play(index: i) }
+                ForEach(rows, id: \.track.id) { row in
+                    PlaylistRow(track: row.track, isCurrent: model.currentIndex == row.index, isPlaying: model.isPlaying)
+                        .tag(row.track.id)
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) { model.play(index: row.index) }
                 }
-                .onMove { from, to in model.move(from: from, to: to) }
+                .onMove(perform: filtering ? nil : { from, to in model.move(from: from, to: to) })
+                .onInsert(of: [.fileURL]) { offset, providers in
+                    // drop files/folders between rows; with a filter active, append
+                    let at = filtering ? nil : offset
+                    loadDroppedURLs(providers) { urls in model.add(urls: urls, playFirst: false, at: at) }
+                }
+            }
+            .overlay {
+                if model.playlist.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "folder.badge.plus").font(.system(size: 30)).foregroundStyle(.tertiary)
+                        Text("Drop files or folders here").foregroundStyle(.secondary)
+                    }
+                } else if filtering && rows.isEmpty {
+                    Text("No matches").foregroundStyle(.secondary)
+                }
             }
             .contextMenu(forSelectionType: Track.ID.self) { ids in
-                Button("Play") { if let id = ids.first, let i = model.playlist.firstIndex(where: { $0.id == id }) { model.play(index: i) } }
+                Button("Play") { play(ids) }
                 Button("Show in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting(model.playlist.filter { ids.contains($0.id) }.map(\.url))
                 }
                 Divider()
                 Button("Remove") { model.remove(ids: ids) }
-            } primaryAction: { ids in
-                if let id = ids.first, let i = model.playlist.firstIndex(where: { $0.id == id }) { model.play(index: i) }
-            }
+            } primaryAction: { ids in play(ids) }
             .onDeleteCommand { model.remove(ids: model.selection) }
             Divider()
             HStack {
-                Text("\(model.playlist.count) items").font(.caption).foregroundStyle(.secondary)
+                if model.isScanning {
+                    ProgressView().controlSize(.small)
+                    Text("Scanning…").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text(filtering ? "\(rows.count) of \(model.playlist.count) items" : "\(model.playlist.count) items")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Spacer()
                 Button("Clear") { model.clearPlaylist() }.buttonStyle(.borderless).font(.caption)
                     .disabled(model.playlist.isEmpty)
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
         }
+        .background {
+            // ⌘F focuses the search field
+            Button("") { searchFocused = true }.keyboardShortcut("f").hidden()
+        }
     }
 
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Filter tracks", text: $query)
+                .textFieldStyle(.plain)
+                .focused($searchFocused)
+                .onSubmit { if let first = rows.first { model.play(index: first.index) } }
+                .onExitCommand { query = ""; searchFocused = false }
+            if !query.isEmpty {
+                Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+    }
+
+    private func play(_ ids: Set<Track.ID>) {
+        if let id = ids.first, let i = model.playlist.firstIndex(where: { $0.id == id }) { model.play(index: i) }
+    }
+}
+
+struct PlaylistRow: View {
+    let track: Track
+    let isCurrent: Bool
+    let isPlaying: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: isCurrent ? (isPlaying ? "speaker.wave.2.fill" : "speaker.fill") : "")
+                .frame(width: 16)
+                .foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(track.name).lineLimit(1)
+                Text(track.folder).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+            Text(track.url.pathExtension.uppercased()).font(.caption2).foregroundStyle(.secondary)
+        }
+        .help(track.url.path)
+    }
 }
 
 func timeString(_ t: Double) -> String {

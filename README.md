@@ -7,18 +7,39 @@ can forward it over optical (S/PDIF) to an AC3-capable amp.
 ## Build & run
 
 ```sh
-brew install ffmpeg            # FFmpeg 7+ (tested with 9.0)
-./scripts/build_app.sh         # -> build/Surround Player.app
-open "build/Surround Player.app"
+brew install nasm              # assembler for the Intel FFmpeg build (optional but faster)
+./scripts/build_app.sh         # first run also builds FFmpeg from source (~5 min)
+open "build/arm64/Surround Player.app"
 ```
 
-Only the Command Line Tools are needed, not Xcode. The app links against Homebrew's
-FFmpeg in `/opt/homebrew`, so it runs on Macs that have it installed.
+Only the Command Line Tools are needed, not Xcode. `build_app.sh` produces:
 
-Pick the TV in the toolbar's output menu (or Settings ⌘,). Drag in files or folders,
-or use ⌘O. Shortcuts: Space play/pause, ←/→ ±10 s, ↑/↓ ±1 min, ⌘←/⌘→ previous/next.
-Double-click the video to go full screen. Click the **DOLBY DIGITAL / PCM** badge to see
-exactly what is being sent.
+| Output | Runs on |
+|---|---|
+| `build/arm64/Surround Player.app` + `build/SurroundPlayer-<ver>-apple-silicon.zip` | Apple Silicon |
+| `build/x86_64/Surround Player.app` + `build/SurroundPlayer-<ver>-intel.zip` | Intel |
+| `build/universal/Surround Player.app` + `build/SurroundPlayer-<ver>-universal.zip` | both |
+
+FFmpeg is compiled statically by `scripts/build_ffmpeg.sh` into `vendor/ffmpeg/<arch>`.
+It's a slim LGPL build: every demuxer and decoder, plus only the AC3 encoder and the
+spdif muxer. So the apps depend on nothing outside macOS (the build script checks this
+with `otool`). `ARCHS=arm64 ./scripts/build_app.sh` builds a single architecture. Plain
+`swift build` uses the vendored FFmpeg if it has been built, otherwise Homebrew's.
+
+The apps are ad-hoc signed, not notarized. On another Mac, right-click → Open the first
+time, or run `xattr -dr com.apple.quarantine "Surround Player.app"`.
+
+The icon comes from `icon.png`. `scripts/make_icns.sh` clips its corners transparent,
+fits it to the macOS icon grid and writes `Resources/AppIcon.icns`. The build reruns it
+whenever `icon.png` changes.
+
+Pick the TV in the toolbar's output menu (or Settings ⌘,). Drag files or whole folders
+onto the window or into the playlist (folders are scanned recursively), or use ⌘O.
+Type in the sidebar's filter field (⌘F) to search the playlist by file or folder name.
+All words must match, so `pink wall` finds Pink Floyd/The Wall tracks. Press Return to
+play the first match and Esc to clear. Shortcuts: Space play/pause, ←/→ ±10 s,
+↑/↓ ±1 min, ⌘←/⌘→ previous/next. Double-click the video to go full screen. Click the
+**DOLBY DIGITAL / PCM** badge to see exactly what is being sent.
 
 TV setup: set the TV's digital/optical audio output format to **Pass-through**
 (or Auto/Bitstream), not PCM.
@@ -58,6 +79,9 @@ Sources/PlayerCore/        C engine
   pc_output.c              CoreAudio HAL: hog mode, format switching, IOProc ring, clock
 Sources/SurroundPlayer/    SwiftUI app
 Sources/pctest/            CLI harness
+scripts/build_app.sh       arm64 / x86_64 / universal apps + zips
+scripts/build_ffmpeg.sh    static FFmpeg per architecture -> vendor/ffmpeg/<arch>
+scripts/make_icns.sh       icon.png -> Resources/AppIcon.icns
 ```
 
 `pctest` is useful for checking a setup without the GUI:
