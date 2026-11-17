@@ -32,6 +32,8 @@ static const IID pc_IID_IMMDeviceEnumerator = {0xA95664D2, 0x9614, 0x4F35, {0xA7
 static const IID pc_IID_IAudioClient = {0x1CB9AD4C, 0xDBFA, 0x4C32, {0xB1, 0x78, 0xC2, 0xF5, 0x68, 0xA7, 0x03, 0xB2}};
 static const IID pc_IID_IAudioRenderClient = {0xF294ACFC, 0x3146, 0x4483, {0xA7, 0xBF, 0xAD, 0xDC, 0xA7, 0xC2, 0x60, 0xE2}};
 static const IID pc_IID_IAudioClock = {0xCD63314F, 0x3FBA, 0x4A1B, {0x81, 0x2C, 0xEF, 0x96, 0x35, 0x87, 0x28, 0xE7}};
+static const IID pc_IID_IUnknown = {0x00000000, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+static const IID pc_IID_IMMNotificationClient = {0x7991EEC9, 0x7E89, 0x4D85, {0x83, 0x90, 0x6C, 0x70, 0x3C, 0xEC, 0x60, 0xC0}};
 #define PC_KSGUID(tag) {tag, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71}}
 static const GUID pc_SUBTYPE_IEEE_FLOAT = PC_KSGUID(0x00000003);
 static const GUID pc_SUBTYPE_IEC61937_DTS = PC_KSGUID(0x00000008);
@@ -241,6 +243,86 @@ int pcad_list(PCDevice *out, int max) {
 }
 
 // ---------------------------------------------------------------------------
+// device change notifications (IMMNotificationClient, a static C COM object)
+
+static SRWLOCK g_reg_lock = SRWLOCK_INIT;   // serialises (un)registration
+static SRWLOCK g_cb_lock = SRWLOCK_INIT;    // guards g_cb / g_ctx; held shared while calling out
+static PCDeviceChangeCallback g_cb;
+static void *g_ctx;
+static IMMDeviceEnumerator *g_notify_enum;
+
+static void fire_change(void) {
+    AcquireSRWLockShared(&g_cb_lock);
+    if (g_cb) g_cb(g_ctx);
+    ReleaseSRWLockShared(&g_cb_lock);
+}
+
+static HRESULT STDMETHODCALLTYPE nc_query_interface(IMMNotificationClient *This, REFIID riid, void **ppv) {
+    if (IsEqualIID(riid, &pc_IID_IUnknown) || IsEqualIID(riid, &pc_IID_IMMNotificationClient)) {
+        *ppv = This;
+        return S_OK;
+    }
+    *ppv = NULL;
+    return E_NOINTERFACE;
+}
+static ULONG STDMETHODCALLTYPE nc_add_ref(IMMNotificationClient *This) { (void)This; return 1; }   // static object
+static ULONG STDMETHODCALLTYPE nc_release(IMMNotificationClient *This) { (void)This; return 1; }
+static HRESULT STDMETHODCALLTYPE nc_state_changed(IMMNotificationClient *This, LPCWSTR id, DWORD state) {
+    (void)This; (void)id; (void)state;
+    fire_change();
+    return S_OK;
+}
+static HRESULT STDMETHODCALLTYPE nc_added(IMMNotificationClient *This, LPCWSTR id) { (void)This; (void)id; fire_change(); return S_OK; }
+static HRESULT STDMETHODCALLTYPE nc_removed(IMMNotificationClient *This, LPCWSTR id) { (void)This; (void)id; fire_change(); return S_OK; }
+static HRESULT STDMETHODCALLTYPE nc_default_changed(IMMNotificationClient *This, EDataFlow flow, ERole role, LPCWSTR id) {
+    (void)This; (void)id;
+    if (flow == eRender && role == eConsole) fire_change();   // once, not per role
+    return S_OK;
+}
+static HRESULT STDMETHODCALLTYPE nc_property_changed(IMMNotificationClient *This, LPCWSTR id, const PROPERTYKEY key) {
+    (void)This; (void)id; (void)key;   // frequent and noisy; format changes show up as lost streams
+    return S_OK;
+}
+static IMMNotificationClientVtbl g_nc_vtbl = {
+    nc_query_interface, nc_add_ref, nc_release, nc_state_changed, nc_added, nc_removed,
+    nc_default_changed, nc_property_changed,
+};
+static IMMNotificationClient g_nc = { &g_nc_vtbl };
+
+void pcad_set_change_callback(PCDeviceChangeCallback cb, void *ctx) {
+    AcquireSRWLockExclusive(&g_reg_lock);
+    if (cb && !g_notify_enum) {
+        g_notify_enum = enumerator();
+        if (g_notify_enum && FAILED(IMMDeviceEnumerator_RegisterEndpointNotificationCallback(g_notify_enum, &g_nc)))
+            RELEASE(g_notify_enum);
+    }
+    AcquireSRWLockExclusive(&g_cb_lock);   // after this no call to the old callback is running
+    g_cb = cb;
+    g_ctx = ctx;
+    ReleaseSRWLockExclusive(&g_cb_lock);
+    if (!cb && g_notify_enum) {
+        IMMDeviceEnumerator_UnregisterEndpointNotificationCallback(g_notify_enum, &g_nc);
+        RELEASE(g_notify_enum);
+    }
+    ReleaseSRWLockExclusive(&g_reg_lock);
+}
+
+int pcad_lost(PCAudioDevice *d) { return d && InterlockedCompareExchange(&d->lost, 0, 0) != 0; }
+
+static int is_invalidated(HRESULT hr) {
+#ifdef AUDCLNT_E_RESOURCES_INVALIDATED
+    if (hr == AUDCLNT_E_RESOURCES_INVALIDATED) return 1;
+#endif
+    return hr == AUDCLNT_E_DEVICE_INVALIDATED;
+}
+
+// The stream is dead for good (device removed, TV changed input, format changed).
+static void mark_lost(PCAudioDevice *d) {
+    InterlockedExchange(&d->lost, 1);
+    fire_change();
+}
+
+// ---------------------------------------------------------------------------
 // render thread
 
 // pc_now_ns() time at which the next frame we write will be played.
@@ -266,19 +348,24 @@ static DWORD WINAPI render_thread(LPVOID arg) {
     for (;;) {
         DWORD w = WaitForMultipleObjects(2, waits, FALSE, 2000);
         if (w == WAIT_OBJECT_0) break;
-        if (w != WAIT_OBJECT_0 + 1) continue;   // timeout: device stalled, keep waiting
+        if (w != WAIT_OBJECT_0 + 1) {
+            // no event for 2 s: an unplugged endpoint can just stop signalling; probe it
+            UINT32 pad = 0;
+            if (is_invalidated(IAudioClient_GetCurrentPadding(d->client, &pad))) { mark_lost(d); break; }
+            continue;
+        }
         UINT32 n = d->buffer_frames;
         if (!d->exclusive) {
             UINT32 pad = 0;
             HRESULT hr = IAudioClient_GetCurrentPadding(d->client, &pad);
-            if (hr == AUDCLNT_E_DEVICE_INVALIDATED) { InterlockedExchange(&d->lost, 1); break; }
+            if (is_invalidated(hr)) { mark_lost(d); break; }
             if (FAILED(hr)) continue;
             n = d->buffer_frames - pad;
         }
         if (n == 0) continue;
         BYTE *buf = NULL;
         HRESULT hr = IAudioRenderClient_GetBuffer(d->rc, n, &buf);
-        if (hr == AUDCLNT_E_DEVICE_INVALIDATED) { InterlockedExchange(&d->lost, 1); break; }
+        if (is_invalidated(hr)) { mark_lost(d); break; }
         if (FAILED(hr)) continue;
         d->cb(d->ctx, buf, (int)n, next_present_ns(d));
         IAudioRenderClient_ReleaseBuffer(d->rc, n, 0);

@@ -15,5 +15,7 @@ PCAudioDevice *pcad_open(const char *uid, PCStreamType type, PCDeviceFormat *fmt
 int pcad_start(PCAudioDevice *d, PCRenderCallback cb, void *ctx) { (void)d; (void)cb; (void)ctx; return -1; }
 void pcad_close(PCAudioDevice *d) { (void)d; }
 int pcad_list(PCDevice *out, int max) { (void)out; (void)max; return 0; }
+void pcad_set_change_callback(PCDeviceChangeCallback cb, void *ctx) { (void)cb; (void)ctx; }
+int pcad_lost(PCAudioDevice *d) { (void)d; return 0; }
 
 #endif

@@ -55,6 +55,8 @@ struct PCOut {
 };
 
 int pc_list_output_devices(PCDevice *out, int max) { return pcad_list(out, max); }
+void pc_set_device_change_callback(PCDeviceChangeCallback cb, void *ctx) { pcad_set_change_callback(cb, ctx); }
+int pc_out_lost(PCOut *o) { return o && o->dev && pcad_lost(o->dev); }
 
 // ---------------------------------------------------------------------------
 // render callback (device real-time thread: no locks, no allocation)

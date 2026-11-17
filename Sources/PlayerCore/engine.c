@@ -996,6 +996,7 @@ static PCOut *take_output(PCPlayer *p, PCStreamType type, int burst, char *oerr,
     const PCConfig *cfg = &p->cfg;
     if (cfg->dump_path) return pc_out_open_file(cfg->dump_path, bitstream, 2, 48000, oerr, len);
     const char *uid = cfg->device_uid ? cfg->device_uid : "";
+    if (p->kept_out && pc_out_lost(p->kept_out)) drop_kept_output(p);   // never reuse a dead stream
     if (p->kept_out) {
         // reuse only for the same device, mode and burst size (AC3 <-> DTS needs a fresh stream)
         if (p->kept_type == type && (!bitstream || p->kept_burst == burst) && strcmp(p->kept_uid, uid) == 0) {
@@ -1345,6 +1346,10 @@ void pc_player_seek(PCPlayer *p, double seconds) {
     p->seek_pos = seconds;
     p->last_pos = seconds;
     pc_mutex_unlock(&p->lock);
+}
+
+int pc_player_output_lost(PCPlayer *p) {
+    return p->is_open && p->out && pc_out_lost(p->out);
 }
 
 double pc_player_position(PCPlayer *p) {

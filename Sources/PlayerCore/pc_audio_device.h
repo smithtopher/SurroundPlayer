@@ -53,5 +53,9 @@ int pcad_start(PCAudioDevice *d, PCRenderCallback cb, void *ctx);
 void pcad_close(PCAudioDevice *d);
 // Backs pc_list_output_devices.
 int pcad_list(PCDevice *out, int max);
+// Backs pc_set_device_change_callback (may be a no-op where the app watches devices itself).
+void pcad_set_change_callback(PCDeviceChangeCallback cb, void *ctx);
+// 1 once the open stream was invalidated (device removed / reconfigured); it stays dead.
+int pcad_lost(PCAudioDevice *d);
 
 #endif

@@ -108,6 +108,16 @@ PC_API const uint8_t *pc_player_cover_art(PCPlayer *p, int *size);
 
 PC_API int pc_list_output_devices(PCDevice *out, int max);
 
+// Device hot-plug. `cb` runs on an OS thread whenever output devices appear, disappear,
+// change state or the default changes, and when an open output stream is invalidated
+// (e.g. the TV changed input). Don't block or call the engine from it: post to your own
+// thread, then re-list devices and check pc_player_output_lost. NULL unregisters.
+// Windows (IMMNotificationClient). macOS: not implemented (the app listens to CoreAudio itself).
+typedef void (*PCDeviceChangeCallback)(void *ctx);
+PC_API void pc_set_device_change_callback(PCDeviceChangeCallback cb, void *ctx);
+// 1 when the open audio output was invalidated and must be reopened (same file, same position).
+PC_API int pc_player_output_lost(PCPlayer *p);
+
 // Visualiser tap. When enabled, decoded audio is also kept as stereo float @ 48 kHz.
 // pc_player_vis_samples copies the `frames` L/R frames that are leaving the speakers
 // right now (interleaved, so lr must hold frames*2 floats). Returns frames, or 0.

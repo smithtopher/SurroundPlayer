@@ -39,13 +39,43 @@ static int list_devices(void) {
     return 0;
 }
 
+// device hot-plug: the callback runs on an OS thread, so it only raises a flag
+static _Atomic int devices_changed;
+static void on_devices_changed(void *ctx) { (void)ctx; atomic_store(&devices_changed, 1); }
+
+static double elapsed_s(int64_t since) { return (double)(pc_now_ns() - since) * 1e-9; }
+
+// pcdump watch [--seconds N]: print the device list whenever it changes (plays nothing)
+static int watch_devices(double seconds) {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    pc_set_device_change_callback(on_devices_changed, NULL);
+    int64_t start = pc_now_ns();
+    printf("[%.1f s] devices:\n", 0.0);
+    list_devices();
+    while (seconds <= 0 || elapsed_s(start) < seconds) {
+        pc_sleep_us(100000);
+        if (atomic_exchange(&devices_changed, 0)) {
+            pc_sleep_us(300000);                  // let a burst of notifications settle
+            atomic_store(&devices_changed, 0);
+            printf("[%.1f s] devices changed:\n", elapsed_s(start));
+            list_devices();
+        }
+    }
+    pc_set_device_change_callback(NULL, NULL);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc >= 2 && !strcmp(argv[1], "devices")) return list_devices();
+    if (argc >= 2 && !strcmp(argv[1], "watch"))
+        return watch_devices(argc >= 4 && !strcmp(argv[2], "--seconds") ? atof(argv[3]) : 0);
     int play = argc >= 2 && !strcmp(argv[1], "play");
     if (argc < 3) {
         fprintf(stderr, "usage: pcdump <media> <out> [--pcm] [--dts] [--stereo]\n"
                         "       pcdump devices\n"
-                        "       pcdump play <media> [--device UID] [--pcm] [--dts] [--stereo] [--seconds N] [--debug]\n");
+                        "       pcdump watch [--seconds N]\n"
+                        "       pcdump play <media> [--device UID] [--pcm] [--dts] [--stereo] [--seconds N] [--debug]\n"
+                        "         (play reopens at the same position when the output is lost)\n");
         return 1;
     }
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -77,17 +107,42 @@ int main(int argc, char **argv) {
     PCInfo info;
     pc_player_get_info(p, &info);
     printf("source: %s\noutput: %s\n", info.source_audio, info.output);
+    if (play) pc_set_device_change_callback(on_devices_changed, NULL);
     int64_t start = pc_now_ns(), next_report = start + 1000000000LL;
+    int is_open = 1;
+    double resume_at = 0;
     while (!atomic_load(&done)) {
         pc_sleep_us(20000);
         int64_t now = pc_now_ns();
+        if (play && atomic_exchange(&devices_changed, 0)) {
+            printf("[%.1f s] devices changed%s\n", elapsed_s(start),
+                   is_open && pc_player_output_lost(p) ? ": output lost" : "");
+            if (is_open && pc_player_output_lost(p)) {
+                // what the app does: close, then reopen the same file at the same position
+                resume_at = pc_player_position(p);
+                pc_player_close(p);
+                is_open = 0;
+            }
+            if (!is_open) {
+                cfg.start_position = resume_at;
+                if (pc_player_open(p, media, &cfg, 0, err, sizeof(err)) == 0) {
+                    is_open = 1;
+                    pc_player_get_info(p, &info);
+                    printf("[%.1f s] reopened at %.2f s: %s\n", elapsed_s(start), resume_at, info.output);
+                } else {
+                    printf("[%.1f s] reopen failed (%s), waiting for the device\n", elapsed_s(start), err);
+                }
+            }
+        }
         if (play && now >= next_report) {
-            printf("  %.2f s\n", pc_player_position(p));
-            if (debug) pc_player_debug(p);
+            if (is_open) printf("  %.2f s\n", pc_player_position(p));
+            if (is_open && debug) pc_player_debug(p);
             next_report += 1000000000LL;
         }
         if (seconds > 0 && (double)(now - start) * 1e-9 >= seconds) break;
     }
+    if (play) pc_set_device_change_callback(NULL, NULL);
+    if (!is_open) { pc_player_destroy(p); return 3; }
     pc_player_get_info(p, &info);
     printf("video: %s, frames: %d\n", info.video, frames);
     pc_player_close(p);

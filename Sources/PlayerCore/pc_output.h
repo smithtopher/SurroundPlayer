@@ -45,5 +45,7 @@ double pc_out_latency(PCOut *o);
 // Presentation timestamp of the audio currently leaving the device (NAN if unknown).
 double pc_out_clock(PCOut *o);
 void pc_out_debug(PCOut *o);
+// 1 when the device stream was invalidated (never for file sinks).
+int pc_out_lost(PCOut *o);
 
 #endif

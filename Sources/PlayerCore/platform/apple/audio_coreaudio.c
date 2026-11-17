@@ -389,6 +389,10 @@ int pcad_start(PCAudioDevice *d, PCRenderCallback cb, void *ctx) {
     return 0;
 }
 
+// The macOS app watches kAudioHardwarePropertyDevices itself (PlayerModel.watchDevices).
+void pcad_set_change_callback(PCDeviceChangeCallback cb, void *ctx) { (void)cb; (void)ctx; }
+int pcad_lost(PCAudioDevice *d) { (void)d; return 0; }
+
 void pcad_close(PCAudioDevice *d) {
     if (!d) return;
     if (d->procid) {

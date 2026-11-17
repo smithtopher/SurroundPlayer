@@ -63,7 +63,10 @@ Implemented as below, with these decisions (see the file header):
   covers the buffer queue; adding `GetStreamLatency` would count it twice.
 - COM: `CoIncrementMTAUsage` once, so any thread may call in.
 - Test driver: `pctest.exe devices` / `pctest.exe play <silent media> [--dts] [--pcm] [--seconds N] [--debug]`.
-- Still to do: `IMMNotificationClient` device-change events surfaced to the app.
+- Device changes: `pc_set_device_change_callback` (IMMNotificationClient, plus a call when
+  a stream is invalidated) and `pc_player_output_lost`. The app posts the callback to its
+  UI thread, re-lists devices, and reopens at the same position when the output is lost
+  (`pctest play` does exactly that). Not yet tested with a real TV input change.
 
 Implement `pc_audio_device.h`. The macOS version (`platform/apple/audio_coreaudio.c`)
 is the reference for behaviour.

@@ -18,7 +18,12 @@ docs; this file is the context for continuing development.
     buffer), PCM shared works, clock tracks real time. **The Samsung's HDMI endpoint refuses
     the IEC 61937 DTS subtype** (EDID has no DTS), so DTS mode falls back to decoded PCM on
     this PC. The user confirmed the amp showed Dolby Digital, with no noise.
-    **Next: device hot-plug (IMMNotificationClient), then D3D11VA, then the WinUI 3 app.**
+  - **Hot-plug written, NOT yet tested with a real TV input change:**
+    `pc_set_device_change_callback` + `pc_player_output_lost` (WASAPI: IMMNotificationClient,
+    invalidated-stream detection). Test: `pctest play <3-min silent file> --seconds 90`
+    while the user switches the TV input away and back; expect "output lost" then
+    "reopened at …", and the amp back on Dolby Digital. `pctest watch` lists changes only.
+    **Then: D3D11VA, then the WinUI 3 app.**
   - **The Windows PC is connected the same way:** HDMI → Samsung TV → optical → AC3 amp.
     The user confirmed the testing rule below (silent files only) for it.
   - **Windows build (no PATH setup needed):**
