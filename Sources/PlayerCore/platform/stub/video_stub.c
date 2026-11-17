@@ -1,6 +1,6 @@
 // Stub video back-end: software decoding only; native frames are refcounted
 // AVFrame clones. Build with -DPC_STUB_BACKENDS (all stubs), or -DPC_STUB_VIDEO for a
-// real audio back-end with software video (Windows until the D3D11VA back-end exists).
+// real audio back-end with software video (bring-up of a new OS's audio first).
 #if defined(PC_STUB_BACKENDS) || defined(PC_STUB_VIDEO)
 
 #include "../../pc_video_backend.h"

@@ -77,10 +77,39 @@ typedef struct {
 } PCDevice;
 
 // A decoded video frame, ready to display. Its type depends on the platform's video
-// back-end: macOS: CVPixelBufferRef; Windows (planned): ID3D11Texture2D + array slice;
+// back-end: macOS: CVPixelBufferRef; Windows: opaque, read it with pc_frame_info;
 // stub back-end: refcounted AVFrame. Only valid for the duration of the callback;
-// retain it with the platform's own mechanism (e.g. CVPixelBufferRetain) to keep it.
+// retain it with the platform's own mechanism (macOS: CVPixelBufferRetain; Windows:
+// pc_frame_retain / pc_frame_release) to keep it.
 typedef void *PCNativeFrame;
+
+#ifdef _WIN32
+typedef enum {
+    PC_FRAME_D3D11 = 1,         // GPU: slice `array_index` of `texture` (NV12 / P010)
+    PC_FRAME_BGRA = 2,          // CPU: `bgra` rows of `stride` bytes, full-range BT.709
+} PCFrameKind;
+
+typedef struct {
+    int kind;                   // PCFrameKind
+    int width, height;          // visible size (the texture can be larger: decoder alignment)
+    int sar_num, sar_den;       // sample aspect ratio (1:1 if unknown)
+    int color_space, color_primaries, color_trc, color_range;   // FFmpeg AVColor* values
+    void *texture;              // ID3D11Texture2D* (texture array), PC_FRAME_D3D11 only
+    int array_index;
+    int dxgi_format;            // DXGI_FORMAT of the texture (103 NV12, 104 P010)
+    int shader_resource;        // 1: the slice can be bound as an SRV directly; 0: copy it first
+    const uint8_t *bgra;        // PC_FRAME_BGRA only
+    int stride;
+} PCFrameInfo;
+
+// The device the UI renders with. Decoded textures live on it, so the UI can sample
+// them without copies. Call before pc_player_open (affects players opened later); NULL
+// = each player creates its own device. The engine takes a reference.
+PC_API void pc_set_d3d11_device(void *id3d11device);
+PC_API int pc_frame_info(PCNativeFrame frame, PCFrameInfo *out);
+PC_API void pc_frame_retain(PCNativeFrame frame);
+PC_API void pc_frame_release(PCNativeFrame frame);
+#endif
 typedef void (*PCVideoCallback)(void *ctx, PCNativeFrame frame, double pts);
 typedef void (*PCEventCallback)(void *ctx, int event, const char *message);
 

@@ -117,7 +117,19 @@ position, like `PlayerModel.handleDeviceChange` on macOS.
 **Milestone:** `pctest`-style headless playback to the TV (`pcdump`, extended with
 a play mode), testing with silent files only. Check the TV/amp shows Dolby Digital/DTS.
 
-## Step 3 — video back-end (`platform/windows/video_d3d11.c`)
+## Step 3 — video back-end (`platform/windows/video_d3d11.c`) — DONE 2026-11-17
+
+Implemented as planned. Details for the UI:
+- Call `pc_set_d3d11_device(device)` with the renderer's `ID3D11Device` before opening
+  files. FFmpeg turns on multithread protection on it.
+- In the video callback, `pc_frame_info` gives either a D3D11 texture slice (NV12 /
+  P010, usually `shader_resource = 1`: make two SRVs, R8 + R8G8 or R16 + R16G16, for that
+  slice) or a CPU BGRA buffer to upload. Colour values are FFmpeg's AVColor* enums.
+- Keep a frame past the callback with `pc_frame_retain` / `pc_frame_release`.
+- The decoder pool has 10 extra frames for the engine's queue plus one or two held by
+  the UI; holding more stalls decoding.
+- Verified on a GTX 970: H.264 hardware decode (all frames delivered). That GPU has no
+  HEVC decoder, so the P010 path is untested.
 
 Implement `pc_video_backend.h`:
 - **`pcvb_create`:**

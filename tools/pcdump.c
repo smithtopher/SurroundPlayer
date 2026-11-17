@@ -25,7 +25,21 @@ static void on_event(void *ctx, int event, const char *msg) {
 
 static void on_frame(void *ctx, PCNativeFrame frame, double pts) {
     (void)frame; (void)pts;
-    (*(int *)ctx)++;
+    int n = ++(*(int *)ctx);
+#ifdef PCTEST_FRAME_INFO
+    // pctest: describe the first frame the presenter hands to the UI
+    PCFrameInfo fi;
+    if (n == 1 && pc_frame_info(frame, &fi) == 0)
+        printf("first frame @ %.3f s: %s %dx%d sar %d:%d, %s, csp %d trc %d range %d\n", pts,
+               fi.kind == PC_FRAME_D3D11 ? "D3D11 texture" : "BGRA CPU", fi.width, fi.height, fi.sar_num, fi.sar_den,
+               fi.kind == PC_FRAME_D3D11 ? (fi.dxgi_format == 103 ? "NV12" : fi.dxgi_format == 104 ? "P010" : "other format")
+                                         : "-",
+               fi.color_space, fi.color_trc, fi.color_range);
+    if (n == 1 && fi.kind == PC_FRAME_D3D11)
+        printf("  slice %d, shader resource %s\n", fi.array_index, fi.shader_resource ? "yes" : "NO (copy needed)");
+#else
+    (void)n;
+#endif
 }
 
 static int list_devices(void) {

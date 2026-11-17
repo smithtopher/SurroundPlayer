@@ -23,7 +23,14 @@ docs; this file is the context for continuing development.
     invalidated-stream detection). Test: `pctest play <3-min silent file> --seconds 90`
     while the user switches the TV input away and back; expect "output lost" then
     "reopened at …", and the amp back on Dolby Digital. `pctest watch` lists changes only.
-    **Then: D3D11VA, then the WinUI 3 app.**
+  - **Step 3 (D3D11VA) done 2026-11-17:** `platform/windows/video_d3d11.c`. H.264 1080p
+    decodes on the GPU into NV12 texture-array slices with SHADER_RESOURCE (UI samples
+    them directly). Pool enlarged by 10 frames for the engine's queue. Software-decoded
+    frames become BGRA in CPU memory. API (Windows only): `pc_set_d3d11_device` (UI's
+    device, before open), `pc_frame_info`, `pc_frame_retain/release`.
+    **This PC's GPU is a GTX 970: no hardware HEVC**, so HEVC is decoded in software
+    (1080p 10-bit keeps up). The P010 texture path is untested for that reason.
+    **Next: step 4, the WinUI 3 app.**
   - **The Windows PC is connected the same way:** HDMI → Samsung TV → optical → AC3 amp.
     The user confirmed the testing rule below (silent files only) for it.
   - **Windows build (no PATH setup needed):**

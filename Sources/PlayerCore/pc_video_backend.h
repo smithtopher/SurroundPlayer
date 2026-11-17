@@ -1,7 +1,7 @@
 // Video back-end interface: hardware decode setup and turning decoded AVFrames into
 // the native frame type the UI layer displays. One implementation per OS:
 //   platform/apple/video_apple.c   VideoToolbox decode; frames are CVPixelBufferRef
-//   platform/windows/…             D3D11VA decode; frames are D3D11 textures (to be written)
+//   platform/windows/video_d3d11.c D3D11VA decode; frames are D3D11 texture slices (pc_frame_info)
 //   platform/stub/video_stub.c     software only; frames are refcounted AVFrames
 //
 // Native frames are opaque to the engine; it only retains/releases them and hands

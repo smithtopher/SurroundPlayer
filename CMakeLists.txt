@@ -52,18 +52,19 @@ add_executable(pcdump tools/pcdump.c)
 target_compile_options(pcdump PRIVATE ${PC_WARN})
 target_link_libraries(pcdump PRIVATE playercore_stub)
 
-# Real Windows back-ends: WASAPI audio; video stays software (stub) until D3D11VA exists.
+# Real Windows back-ends: WASAPI audio, D3D11VA video.
 add_library(playercore_win STATIC
     "${PC_DIR}/engine.c"
     "${PC_DIR}/pc_output.c"
     "${PC_DIR}/platform/windows/audio_wasapi.c"
-    "${PC_DIR}/platform/stub/video_stub.c")
+    "${PC_DIR}/platform/windows/video_d3d11.c")
 target_include_directories(playercore_win PUBLIC "${PC_DIR}" "${PC_DIR}/include")
-target_compile_definitions(playercore_win PUBLIC PC_STUB_VIDEO _CRT_SECURE_NO_WARNINGS _WIN32_WINNT=0x0A00)
+target_compile_definitions(playercore_win PUBLIC _CRT_SECURE_NO_WARNINGS _WIN32_WINNT=0x0A00)
 target_compile_options(playercore_win PRIVATE ${PC_WARN})
-target_link_libraries(playercore_win PUBLIC ffmpeg ole32 avrt)
+target_link_libraries(playercore_win PUBLIC ffmpeg ole32 avrt d3d11 dxgi)
 
-# pctest: same driver as pcdump, on the real back-ends (devices / play / dump)
+# pctest: same driver as pcdump, on the real back-ends (devices / watch / play / dump)
 add_executable(pctest tools/pcdump.c)
 target_compile_options(pctest PRIVATE ${PC_WARN})
+target_compile_definitions(pctest PRIVATE PCTEST_FRAME_INFO)
 target_link_libraries(pctest PRIVATE playercore_win)
