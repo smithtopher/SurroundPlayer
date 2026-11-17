@@ -18,6 +18,9 @@ public sealed class Settings
     public bool stereoAsAC3 { get; set; } = false;
     public double avOffsetMs { get; set; } = 0;
     public bool visualizerEnabled { get; set; } = false;
+    // Windows only: last window size in DIPs (0 = default 1280x800)
+    public double windowWidth { get; set; }
+    public double windowHeight { get; set; }
 
     private static string Path => System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SurroundPlayer", "settings.json");

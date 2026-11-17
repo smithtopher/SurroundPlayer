@@ -37,11 +37,11 @@ public sealed partial class MainWindow : Window
     public MainWindow(string[] files)
     {
         InitializeComponent();
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(1200, 760));
         var icon = Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico");
         if (File.Exists(icon)) AppWindow.SetIcon(icon);
 
         Model = new PlayerModel(DispatcherQueue);
+        PlaceWindow();
         try
         {
             // decoded video lands on our device, so it must exist before the first file opens
@@ -73,6 +73,7 @@ public sealed partial class MainWindow : Window
         Root.DragLeave += (_, _) => DropHighlight.Visibility = Visibility.Collapsed;
         Closed += (_, _) =>
         {
+            SaveWindowSize();
             ShowCursor();
             Model.Shutdown();
             _renderer?.Dispose();
@@ -80,6 +81,34 @@ public sealed partial class MainWindow : Window
 
         UpdateAll();
         if (files.Length > 0) Model.Add(files, playFirst: true);
+    }
+
+    // ------------------------------------------------------------------ window size
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr hwnd);
+
+    private double DpiScale => GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96.0;
+
+    /// AppWindow sizes are physical pixels: scale the size (in DIPs, last used or 1280x800)
+    /// by the display's DPI, keep it within the work area and centre it.
+    private void PlaceWindow()
+    {
+        double s = DpiScale > 0 ? DpiScale : 1;
+        var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary).WorkArea;
+        var st = Model.Settings;
+        double wDip = st.windowWidth >= 760 ? st.windowWidth : 1280, hDip = st.windowHeight >= 480 ? st.windowHeight : 800;
+        int w = Math.Min((int)(wDip * s), (int)(area.Width * 0.95));
+        int h = Math.Min((int)(hDip * s), (int)(area.Height * 0.95));
+        AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(area.X + (area.Width - w) / 2, area.Y + (area.Height - h) / 2, w, h));
+    }
+
+    private void SaveWindowSize()
+    {
+        if (_fullScreen || AppWindow.Presenter is OverlappedPresenter { State: not OverlappedPresenterState.Restored }) return;
+        double s = DpiScale > 0 ? DpiScale : 1;
+        Model.Settings.windowWidth = Math.Round(AppWindow.Size.Width / s);
+        Model.Settings.windowHeight = Math.Round(AppWindow.Size.Height / s);
+        Model.Settings.Save();
     }
 
     // ------------------------------------------------------------------ model -> UI

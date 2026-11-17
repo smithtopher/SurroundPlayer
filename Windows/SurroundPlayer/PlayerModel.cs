@@ -82,6 +82,7 @@ public sealed class PlayerModel : Observable
     private readonly DispatcherQueue _ui;
     private readonly IntPtr _player;
     private readonly Settings _settings = Settings.Load();
+    public Settings Settings => _settings;
     private readonly DispatcherQueueTimer _timer;
     // keep the delegates alive for as long as the engine may call them
     private readonly Native.VideoCallback _videoCb;
