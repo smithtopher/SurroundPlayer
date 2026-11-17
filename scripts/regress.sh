@@ -12,6 +12,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 DUMP="${1:-.build/portable/pcdump}"
 [ -x "$DUMP" ] || { echo "dump tool $DUMP not found (run scripts/check_portable.sh first)"; exit 2; }
+PY=$(command -v python3 || command -v python) || { echo "python3 not found"; exit 2; }   # Windows: often just "python"
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 FAIL=0
@@ -50,19 +51,19 @@ offs = [i for i in range(0, len(d) - 4, 2) if d[i:i+4] == b'\x72\xf8\x1f\x4e']
 print(sorted(set(offs[i+1] - offs[i] for i in range(len(offs) - 1))) if len(offs) > 1 else [])
 EOF
 ff -i "$W/src.flac" -c:a pcm_s16le "$W/src.wav"
-SRC_FREQS=$(python3 -I "$W/freqs.py" "$W/src.wav")
+SRC_FREQS=$("$PY" -I "$W/freqs.py" "$W/src.wav")
 echo "source channel tones: $SRC_FREQS"
 
 check_stream() { # name file expect-codec expect-layout expect-spacing
     local info; info=$(ffprobe -hide_banner -f spdif -i "$2" 2>&1 | grep "Stream #0")
     echo "$info" | grep -q "$3" && echo "$info" | grep -q "48000 Hz" && echo "$info" | grep -q "$4" \
         && pass "$1: $3 $4 48 kHz" || fail "$1: got '$info'"
-    local sp; sp=$(python3 -I "$W/bursts.py" "$2")
+    local sp; sp=$("$PY" -I "$W/bursts.py" "$2")
     [ "$sp" = "[$5]" ] && pass "$1: bursts every $5 bytes" || fail "$1: burst spacing $sp, want [$5]"
 }
 check_channels() { # name file
     ff -f spdif -i "$2" -c:a pcm_s16le "$W/out.wav"
-    local f; f=$(python3 -I "$W/freqs.py" "$W/out.wav")
+    local f; f=$("$PY" -I "$W/freqs.py" "$W/out.wav")
     [ "$f" = "$SRC_FREQS" ] && pass "$1: channel mapping ($f)" || fail "$1: channels '$f' != source '$SRC_FREQS'"
 }
 check_passthrough() { # name dump source fmt

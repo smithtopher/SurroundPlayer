@@ -21,6 +21,19 @@ Sources/PlayerCore/
 OS media APIs. They build against the stub back-ends with no framework headers or
 symbols, and that build produces byte-identical output to the macOS build.
 
+## Step 0 — before starting
+
+- **Ask the user how this PC is connected** (HDMI to the Samsung TV? amp on optical?).
+  Agree that device tests use silent media only.
+- The repo's `.gitattributes` keeps `*.sh` / `*.patch` LF. If scripts fail with `$'\r'`
+  errors, the checkout predates it: run `git add --renormalize .` or re-clone.
+- `pc_platform.h`'s Win32 branch has **never been compiled** (it was written on macOS).
+  Expect small fixes. Check thread creation, the QPC clock and SRWLOCK/condition-variable
+  pairing first.
+- There is no Windows build system yet. Suggested: a `CMakeLists.txt` (clang-cl) with
+  three targets: `playercore` (static, stub back-ends, for step 1), `pcdump`, and later
+  `playercore.dll` with the real back-ends.
+
 ## Step 1 — engine builds and dumps on Windows (stub back-ends)
 
 1. **Toolchain.** The C engine uses C11 `<stdatomic.h>`, including `_Atomic double`.
@@ -34,7 +47,7 @@ symbols, and that build produces byte-identical output to the macOS build.
    `spdif`. Shared (DLL) builds are fine on Windows (LGPL).
 3. **Build `engine.c`, `pc_output.c`, `platform/stub/*.c` and `tools/pcdump.c`** with
    `-DPC_STUB_BACKENDS`. Link FFmpeg and `winmm` (for `timeBeginPeriod`).
-4. **Run `scripts/regress.sh <path-to-pcdump.exe>`** from MSYS2/Git Bash (it needs
+4. **Run `bash scripts/regress.sh <path-to-pcdump.exe>`** from MSYS2/Git Bash (it needs
    ffmpeg, ffprobe and python3 on PATH). It must print `ALL PASSED`. That proves
    decode, AC3/DTS encode, IEC 61937 packing, channel mapping and passthrough all
    work on Windows before any device code exists.

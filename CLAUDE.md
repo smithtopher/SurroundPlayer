@@ -1,11 +1,33 @@
 # Surround Player — working notes
 
-Native macOS music/video player whose point is **surround sound over HDMI as a compressed
-bitstream** (Dolby Digital AC3 or DTS, IEC 61937). It's modelled on Kodi's WASAPI-exclusive
-passthrough, done here with CoreAudio. README.md has the user-facing docs; this file is
-the context for continuing development.
+Music/video player whose point is **surround sound over HDMI as a compressed bitstream**
+(Dolby Digital AC3 or DTS, IEC 61937), modelled on Kodi's WASAPI-exclusive passthrough.
+The macOS app (SwiftUI + C engine, CoreAudio) is complete. README.md has the user-facing
+docs; this file is the context for continuing development.
 
-## The user's setup (why this exists)
+## Status and next step (updated 2026-11-17)
+- **macOS: done.** Apple Silicon, Intel and universal builds; see the sections below.
+- **Next: Windows 11 port.** The engine was restructured for it: portable core +
+  per-OS back-ends.
+  - **On a Windows machine, start with `docs/PORTING_WINDOWS.md`, step 1.** Get the
+    engine core + stub back-ends + `tools/pcdump.c` building, then make
+    `bash scripts/regress.sh <pcdump.exe>` print `ALL PASSED`. Only after that, write
+    WASAPI, then D3D11VA, then the WinUI 3 app.
+  - **Before any device testing, ask the user how the PC is connected.** Same Samsung TV
+    over HDMI? Same amp on optical? And confirm the testing rule below (silent files only).
+  - **Not yet done for Windows:**
+    - No Windows build system yet. CMake building the C engine with clang-cl is the
+      suggested route.
+    - The Win32 branch of `pc_platform.h` was written on macOS and **has never been
+      compiled**. Treat it as a draft.
+  - **What's macOS-only:** the macOS-only parts below are marked **(macOS)**.
+    - Swift, `Package.swift`, `build_app.sh`, `build_ffmpeg.sh`, `check_portable.sh`
+      (nm/clang/framework flags), `pctest` and all CoreAudio notes.
+    - Portable to Windows: the C engine sources, `tools/pcdump.c`, `scripts/regress.sh`
+      (needs bash, ffmpeg, ffprobe and python3, e.g. MSYS2 or Git Bash), and
+      `patches/ffmpeg/` (FFmpeg on Windows needs it too).
+
+## The user's setup (why this exists) (macOS side)
 - Mac → **HDMI → Samsung TV → optical (S/PDIF) → AC3-capable amp**. Optical can't carry
   multichannel PCM, so surround has to arrive as AC3/DTS.
 - Over HDMI, the Samsung advertises a true digital format **`cac3` (kAudioFormat60958AC3)**.
@@ -49,7 +71,7 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
                            bit-exact passthrough) for every mode; must print ALL PASSED
 ```
 
-## Build
+## Build (macOS)
 - Toolchain: **Command Line Tools only (no Xcode)**, Swift 6.1 in Swift 5 language mode.
   The project targets macOS 14+ and was developed on an Apple Silicon Mac.
   - There's no `xcodebuild`, and no offline `metal` compiler (shaders go through
@@ -112,7 +134,7 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
 - **Closing:** restores the original physical format, mixing and hog state. SIGINT/SIGTERM
   handlers in the app also restore. A `kill -9` leaves the device changed.
 
-## App behaviour
+## App behaviour (macOS app; the Windows app should match it)
 - **Main window:** the main window is an `NSWindow` + `NSHostingView` (with
   `sceneBridgingOptions = [.toolbars, .title]`) created in `applicationWillFinishLaunching`.
   Don't go back to a SwiftUI `Window` scene: it **doesn't create its window when the app is
@@ -140,10 +162,12 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
 - With no screen-recording or accessibility permission there are no screenshots and no
   synthetic key presses. Verify through:
   - **`scripts/check_portable.sh && scripts/regress.sh`**: the main regression check after
-    any engine change. It's behavioural, so it also works on Windows.
+    any engine change on macOS. `regress.sh` is behavioural and runs anywhere with
+    bash/ffmpeg/ffprobe/python3; pass it the dump tool path (`pcdump.exe` on Windows).
+    `check_portable.sh` is macOS-only.
   - **Byte-level check:** dumps are deterministic for the same build and FFmpeg. Before a
     refactor, dump every mode and `cmp` afterwards.
-  - **`pctest`**:
+  - **`pctest`** (macOS):
     - `pctest devices`: lists outputs; `ac3fmt=1` means the device offers a compressed format.
     - `pctest dump <media> <out.spdif> [--dts] [--dts-bitrate 754] [--pcm] [--no-passthrough] [--stereo-ac3] [--vis]`:
       writes the exact output stream to a file.
@@ -154,7 +178,7 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
     - `ffmpeg -f spdif -i out.spdif x.wav`, then check per-channel frequency with a
       zero-crossing script (test files put a different tone on each channel).
     - Passthrough is verified with `cmp` against the source's elementary stream.
-  - **App debug:** `SURROUND_DEBUG=1` logs status to stderr every second (output, video
+  - **App debug (macOS):** `SURROUND_DEBUG=1` logs status to stderr every second (output, video
     decode, visualiser frames/signal). `SURROUND_TEST_FULLSCREEN=1` toggles full screen after
     2 s. `SurroundPlayer --vis-snapshot <dir>` renders every preset to PNG with synthetic
     music, which is how the visuals were checked.
