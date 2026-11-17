@@ -1,5 +1,6 @@
 import AppKit
 import CoreAudio
+import CoreVideo
 import PlayerCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -226,8 +227,10 @@ final class PlayerModel: ObservableObject {
         bridge = EngineBridge(sink: sink)
         bridge.model = self
         let ctx = Unmanaged.passUnretained(bridge).toOpaque()
-        pc_player_set_callbacks(player, { ctx, pb, _ in
-            guard let ctx, let pb else { return }
+        pc_player_set_callbacks(player, { ctx, frame, _ in
+            guard let ctx, let frame else { return }
+            // macOS video back-end: native frames are CVPixelBuffers (borrowed for this call)
+            let pb = Unmanaged<CVPixelBuffer>.fromOpaque(frame).takeUnretainedValue()
             Unmanaged<EngineBridge>.fromOpaque(ctx).takeUnretainedValue().sink.display(pb)
         }, { ctx, event, _ in
             guard let ctx else { return }

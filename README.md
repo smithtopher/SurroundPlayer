@@ -99,8 +99,9 @@ Per file, with **Settings → Transcode surround to** set to Dolby Digital (defa
   downmix to 5.1 when needed → encode → IEC 61937 → exclusive output.
   - Dolby Digital: AC3 at 384/448/640 kb/s, in 6144-byte bursts.
   - DTS: DTS core at 1509 (full rate) or 754 kb/s, in 2048-byte type I bursts. FFmpeg's DTS
-    encoder is marked experimental and is less refined than its AC3 encoder. It also
-    puts out LFE about 3 dB lower than its input (plain `ffmpeg -c:a dca` does the same).
+    encoder is marked experimental and is less refined than its AC3 encoder. The bundled
+    FFmpeg carries a fix for an LFE bug in it (`patches/ffmpeg/`). LFE still comes out
+    about 2.8 dB lower than its input.
 - **Native tracks pass through bit-for-bit untouched** (if the passthrough option is on):
   - 48 kHz AC3, in either mode.
   - In DTS mode, also 48 kHz DTS, plus the core of DTS-HD MA/HRA. The packer strips the
@@ -123,15 +124,24 @@ built from the IOProc output timestamps plus device latency. If your amp adds de
 ## Layout
 
 ```
-Sources/PlayerCore/        C engine
+Sources/PlayerCore/        C engine: portable core + per-OS back-ends
   include/playercore.h     public API
-  engine.c                 demux / decode / AC3 encode / IEC 61937 / video / A-V sync
-  pc_output.c              CoreAudio HAL: hog mode, format switching, IOProc ring, clock
+  engine.c                 demux / decode / AC3+DTS encode / IEC 61937 / video / A-V sync (portable)
+  pc_output.c              ring buffer, burst + keep-alive logic, render callback, clock (portable)
+  pc_platform.h            threads, locks, clock, sleep (POSIX/Apple and Win32)
+  pc_audio_device.h        audio back-end interface; platform/apple/audio_coreaudio.c (hog mode, formats)
+  pc_video_backend.h       video back-end interface; platform/apple/video_apple.c (VideoToolbox)
+  platform/stub/           no-device / software back-ends (portability check, new-OS bring-up)
+tools/pcdump.c             plain-C dump tool
+patches/ffmpeg/            fixes applied to FFmpeg at build time
+docs/PORTING_WINDOWS.md    Windows 11 port plan
 Sources/SurroundPlayer/    SwiftUI app (Visualizer/: Metal visualiser, presets, audio analysis)
 Sources/pctest/            CLI harness
 scripts/build_app.sh       arm64 / x86_64 / universal apps + zips
 scripts/build_ffmpeg.sh    static FFmpeg per architecture -> vendor/ffmpeg/<arch>
 scripts/make_icns.sh       icon.png -> Resources/AppIcon.icns
+scripts/check_portable.sh  proves the core uses no OS media APIs; builds tools/pcdump
+scripts/regress.sh         output tests for every mode (channel mapping, bursts, passthrough)
 ```
 
 `pctest` is useful for checking a setup without the GUI:

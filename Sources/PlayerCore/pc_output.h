@@ -11,10 +11,12 @@
 
 typedef struct PCOut PCOut;
 
-// bitstream=1: exclusive (hog) mode, 2ch/16-bit/48 kHz digital stream carrying IEC 61937.
-//              The ring then holds little-endian s16 stereo frames.
-// bitstream=0: shared mode, ring holds interleaved float32 in the device's channel count/rate.
-PCOut *pc_out_open(const char *device_uid, int bitstream, char *err, int errlen);
+#include "pc_audio_device.h"
+
+// IEC 61937 types: exclusive mode, 2ch/16-bit/48 kHz digital stream carrying the
+//   bursts; the ring then holds little-endian s16 stereo frames.
+// PC_STREAM_PCM: shared mode, ring holds interleaved float32 in the device's channel count/rate.
+PCOut *pc_out_open(const char *device_uid, PCStreamType type, char *err, int errlen);
 // Testing sink: writes the ring-format bytes to a file, never blocks.
 PCOut *pc_out_open_file(const char *path, int bitstream, int pcm_channels, double pcm_rate, char *err, int errlen);
 void pc_out_close(PCOut *o);

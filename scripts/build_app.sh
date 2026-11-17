@@ -34,6 +34,9 @@ make_bundle() { # <dir> <binary>
 BINS=()
 for ARCH in $ARCHS; do
     echo "== $ARCH"
+    # SwiftPM doesn't track the static FFmpeg libs as inputs: force a relink so a
+    # rebuilt/patched FFmpeg always makes it into the app
+    rm -f ".build/$ARCH/release/SurroundPlayer"
     FFMPEG_PREFIX="$PWD/vendor/ffmpeg/$ARCH" swift build -c release --product SurroundPlayer \
         --triple "$ARCH-apple-macosx$MIN_MACOS" --scratch-path ".build/$ARCH" 2>&1 \
         | grep -v "no platform load command found"   # nasm objects carry no macOS version tag; harmless

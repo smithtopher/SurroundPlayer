@@ -19,11 +19,16 @@ the context for continuing development.
 ## Layout
 ```
 Package.swift              SwiftPM; FFmpeg from $FFMPEG_PREFIX, else vendor/ffmpeg/<host arch>, else Homebrew
-Sources/PlayerCore/        C engine (public API: include/playercore.h)
-  engine.c                 demux/decode threads, AC3/DTS encode, IEC 61937 via FFmpeg "spdif" muxer,
-                           video (VideoToolbox) + presenter synced to audio clock, visualiser audio tap
-  pc_output.c/.h           CoreAudio HAL output: hog mode, mixing off, physical-format switch,
-                           lock-free ring, IOProc, clock (seqlock record + pts markers), burst logic
+Sources/PlayerCore/        C engine = portable core + per-OS back-ends (public API: include/playercore.h)
+  engine.c                 PORTABLE: demux/decode threads, AC3/DTS encode, IEC 61937 via FFmpeg
+                           "spdif" muxer, video decode + presenter synced to audio clock, visualiser tap
+  pc_output.c/.h           PORTABLE: lock-free ring, render callback with burst/keep-alive logic,
+                           pause/flush, clock (seqlock record + pts markers), file sink
+  pc_platform.h            threads/locks/monotonic ns clock/sleep (POSIX+Apple, Win32)
+  pc_audio_device.h        audio back-end interface (pcad_*), takes PCStreamType (PCM / IEC AC3 / IEC DTS)
+  pc_video_backend.h       video back-end interface (pcvb_*): hw decode setup, native frames
+  platform/apple/          audio_coreaudio.c (hog, mixing off, physical format), video_apple.c (VT, CVPixelBuffer)
+  platform/stub/           no-device audio + software video (-DPC_STUB_BACKENDS): portability proof, bring-up
 Sources/SurroundPlayer/    SwiftUI app
   SurroundPlayerApp.swift  App (Settings scene + menus); AppDelegate CREATES THE MAIN WINDOW itself
   PlayerModel.swift        singleton model: playlist, settings (UserDefaults), engine bridge,
@@ -32,10 +37,16 @@ Sources/SurroundPlayer/    SwiftUI app
   VideoSink.swift          AVSampleBufferDisplayLayer, frames shown "display immediately"
   SettingsView.swift
   Visualizer/              Metal MilkDrop-2-style visualiser (shaders compiled at runtime)
-Sources/pctest/            CLI harness for the engine (no GUI)
+Sources/pctest/            Swift CLI harness for the engine (no GUI)
+tools/pcdump.c             plain-C dump driver (built by check_portable.sh; first thing to run on a new OS)
+patches/ffmpeg/            local FFmpeg fixes, applied by build_ffmpeg.sh (stamp-hashed -> auto rebuild)
+docs/PORTING_WINDOWS.md    the Windows 11 port plan, step by step
 scripts/build_app.sh       arm64 + x86_64 + universal .app and zips into build/
 scripts/build_ffmpeg.sh    static slim LGPL FFmpeg 9.0.2 per arch -> vendor/ffmpeg/<arch> (gitignored)
 scripts/make_icns.sh       icon.png -> Resources/AppIcon.icns (masks the opaque corners)
+scripts/check_portable.sh  builds core + stub back-ends; fails on any OS media header/symbol; builds pcdump
+scripts/regress.sh         behavioural output tests (codec/layout, burst spacing, per-channel tones,
+                           bit-exact passthrough) for every mode; must print ALL PASSED
 ```
 
 ## Build
@@ -48,12 +59,30 @@ scripts/make_icns.sh       icon.png -> Resources/AppIcon.icns (masks the opaque 
   - On its first run it builds FFmpeg (~5 min for both archs). The x86_64 FFmpeg build
     needs `nasm` (installed via Homebrew).
   - It fails if anything outside /System or /usr/lib gets linked (it checks with `otool`).
-- `scripts/build_ffmpeg.sh` holds an `OPTIONS` stamp. Change it whenever the configure flags
-  change, so existing vendor builds get rebuilt. The encoders enabled are just **ac3 and dca**.
+- `scripts/build_ffmpeg.sh` holds an `OPTIONS` stamp. It includes a hash of
+  `patches/ffmpeg/*.patch`; change it whenever the configure flags change, so existing vendor
+  builds get rebuilt. The encoders enabled are just **ac3 and dca**.
+- **SwiftPM doesn't track the static FFmpeg libs as link inputs.** After rebuilding FFmpeg,
+  delete the product binaries (or use `build_app.sh`, which does) or you keep the old FFmpeg.
 - `swift build` in development uses `vendor/ffmpeg/arm64` if it exists.
 - Harmless noise: `ld: warning: no platform load command found` from the nasm objects,
   which `build_app.sh` filters out.
 - Apps are ad-hoc signed, not notarized.
+
+## Portability (done 2026-11-17 in preparation for a Windows 11 port)
+- **Core vs back-ends:** `engine.c` and `pc_output.c` contain no OS media code. OS specifics
+  are behind `pcad_*` (audio device) and `pcvb_*` (video).
+- **The rule:** back-ends own only the device. All IEC 61937 / keep-alive / clock logic is
+  in the portable render callback `render()` in `pc_output.c`.
+- **Present time:** the back-end calls `render(ctx, dst, frames, present_ns)` with
+  `present_ns` in `pc_now_ns()`'s timebase (mach host time on macOS, QPC on Windows).
+- **Native frames:** `PCNativeFrame` is opaque. On macOS it's a `CVPixelBufferRef`; Swift
+  converts it with `Unmanaged<CVPixelBuffer>.fromOpaque`.
+- **DLL exports:** `PC_API` marks the exports, for a Windows DLL / P/Invoke.
+- The refactor was verified byte-identical against pre-refactor dumps of every mode, on the
+  real HDMI device, and with the stub build.
+- Windows plan: `docs/PORTING_WINDOWS.md` (WASAPI exclusive with
+  KSDATAFORMAT_SUBTYPE_IEC61937_*, D3D11VA, WinUI 3 + P/Invoke).
 
 ## Engine behaviour (key decisions)
 - **Modes** (`PCOutputMode`):
@@ -110,6 +139,10 @@ scripts/make_icns.sh       icon.png -> Resources/AppIcon.icns (masks the opaque 
   real device. Tones are fine with `pctest dump` (it writes to a file, nothing plays).
 - With no screen-recording or accessibility permission there are no screenshots and no
   synthetic key presses. Verify through:
+  - **`scripts/check_portable.sh && scripts/regress.sh`**: the main regression check after
+    any engine change. It's behavioural, so it also works on Windows.
+  - **Byte-level check:** dumps are deterministic for the same build and FFmpeg. Before a
+    refactor, dump every mode and `cmp` afterwards.
   - **`pctest`**:
     - `pctest devices`: lists outputs; `ac3fmt=1` means the device offers a compressed format.
     - `pctest dump <media> <out.spdif> [--dts] [--dts-bitrate 754] [--pcm] [--no-passthrough] [--stereo-ac3] [--vis]`:
@@ -131,8 +164,16 @@ scripts/make_icns.sh       icon.png -> Resources/AppIcon.icns (masks the opaque 
     that's normal.
 
 ## Known limitations / ideas not done
-- **DTS quality:** FFmpeg's DTS encoder is experimental, and its LFE comes out about 3 dB low
-  (same with plain ffmpeg).
+- **DTS quality:** FFmpeg's DTS encoder is experimental.
+  - **Patched bug:** stock 9.0.2 `shift_history` read `input[-1]` for the LFE, building LFE
+    history from the wrong channel and occasionally crashing (Homebrew's `ffmpeg -c:a dca`
+    crashes about 1 in 12 runs). Fixed by `patches/ffmpeg/0001-…`.
+  - **Remaining:** LFE still comes out about 2.8 dB under the source in the DTS path (AC3
+    is exact). Cause not found yet.
+  - **Finding bugs like this:** Guard Malloc
+    (`DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib MALLOC_PROTECT_BEFORE=1`) on
+    `pcdump` found it; symbolise with the crash report + `atos` against the unstripped
+    `pcdump`.
 - **Untested:** DTS-HD sources (no encoder to make test files), and audible playback through
   the amp.
 - **Not implemented:** subtitles, gapless playback, persisting the playlist across launches,

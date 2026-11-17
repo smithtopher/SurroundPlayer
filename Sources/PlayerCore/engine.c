@@ -4,29 +4,26 @@
 //   demux    av_read_frame -> audio / video packet queues, handles seeks
 //   audio    decode -> swresample -> (PCM | AC3 encode) -> IEC 61937 pack -> output ring
 //            or, for native AC3 tracks, packets -> IEC 61937 pack directly (passthrough)
-//   video    decode (VideoToolbox when possible) -> CVPixelBuffer frame queue
+//   video    decode (hardware via the video back-end) -> native frame queue
 //   present  shows frames against the audio clock, detects end of stream
 // CoreAudio's IOProc drains the ring (pc_output.c).
 #include "playercore.h"
 #include "pc_output.h"
+#include "pc_platform.h"
+#include "pc_video_backend.h"
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/audio_fifo.h>
 #include <libavutil/channel_layout.h>
-#include <libavutil/hwcontext.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
 #include <libswresample/swresample.h>
-#include <libswscale/swscale.h>
 
-#include <mach/mach_time.h>
 #include <math.h>
-#include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 
 // ---------------------------------------------------------------------------
 // packet queue
@@ -39,27 +36,27 @@ typedef struct {
     int64_t bytes, duration;
     _Atomic int serial;
     int abort;
-    pthread_mutex_t m;
-    pthread_cond_t c;
+    pc_mutex m;
+    pc_cond c;
 } PacketQueue;
 
 static void pq_init(PacketQueue *q) {
     memset(q, 0, sizeof(*q));
-    pthread_mutex_init(&q->m, NULL);
-    pthread_cond_init(&q->c, NULL);
+    pc_mutex_init(&q->m);
+    pc_cond_init(&q->c);
 }
 
 static void pq_put(PacketQueue *q, AVPacket *pkt) {
     PktNode *n = av_mallocz(sizeof(*n));
     if (pkt) { n->pkt = av_packet_alloc(); av_packet_move_ref(n->pkt, pkt); }
-    pthread_mutex_lock(&q->m);
+    pc_mutex_lock(&q->m);
     n->serial = q->serial;
     if (q->last) q->last->next = n; else q->first = n;
     q->last = n;
     q->count++;
     if (n->pkt) { q->bytes += n->pkt->size; q->duration += n->pkt->duration; }
-    pthread_cond_signal(&q->c);
-    pthread_mutex_unlock(&q->m);
+    pc_cond_signal(&q->c);
+    pc_mutex_unlock(&q->m);
 }
 
 static void pq_clear_locked(PacketQueue *q) {
@@ -70,40 +67,40 @@ static void pq_clear_locked(PacketQueue *q) {
 }
 
 static void pq_flush(PacketQueue *q) {
-    pthread_mutex_lock(&q->m);
+    pc_mutex_lock(&q->m);
     pq_clear_locked(q);
     atomic_fetch_add(&q->serial, 1);
-    pthread_cond_broadcast(&q->c);
-    pthread_mutex_unlock(&q->m);
+    pc_cond_broadcast(&q->c);
+    pc_mutex_unlock(&q->m);
 }
 
 static void pq_abort(PacketQueue *q) {
-    pthread_mutex_lock(&q->m);
+    pc_mutex_lock(&q->m);
     q->abort = 1;
     atomic_fetch_add(&q->serial, 1);   // also unblocks pc_out_write
-    pthread_cond_broadcast(&q->c);
-    pthread_mutex_unlock(&q->m);
+    pc_cond_broadcast(&q->c);
+    pc_mutex_unlock(&q->m);
 }
 
 static void pq_destroy(PacketQueue *q) {
-    pthread_mutex_lock(&q->m);
+    pc_mutex_lock(&q->m);
     pq_clear_locked(q);
-    pthread_mutex_unlock(&q->m);
-    pthread_mutex_destroy(&q->m);
-    pthread_cond_destroy(&q->c);
+    pc_mutex_unlock(&q->m);
+    pc_mutex_destroy(&q->m);
+    pc_cond_destroy(&q->c);
 }
 
 // 1 = packet, 0 = end-of-stream marker, -1 = aborted
 static int pq_get(PacketQueue *q, AVPacket **pkt, int *serial) {
-    pthread_mutex_lock(&q->m);
-    while (!q->first && !q->abort) pthread_cond_wait(&q->c, &q->m);
-    if (q->abort) { pthread_mutex_unlock(&q->m); return -1; }
+    pc_mutex_lock(&q->m);
+    while (!q->first && !q->abort) pc_cond_wait(&q->c, &q->m);
+    if (q->abort) { pc_mutex_unlock(&q->m); return -1; }
     PktNode *n = q->first;
     q->first = n->next;
     if (!q->first) q->last = NULL;
     q->count--;
     if (n->pkt) { q->bytes -= n->pkt->size; q->duration -= n->pkt->duration; }
-    pthread_mutex_unlock(&q->m);
+    pc_mutex_unlock(&q->m);
     *pkt = n->pkt;
     *serial = n->serial;
     int r = n->pkt ? 1 : 0;
@@ -116,94 +113,94 @@ static int pq_get(PacketQueue *q, AVPacket **pkt, int *serial) {
 
 #define FQ_SIZE 6
 
-typedef struct { CVPixelBufferRef pb; double pts, dur; int serial; uint64_t id; } VFrame;
+typedef struct { void *pb; double pts, dur; int serial; uint64_t id; } VFrame;   // pb: native frame (video back-end)
 
 typedef struct {
     VFrame q[FQ_SIZE];
     int rindex, count, serial, abort;
     uint64_t next_id;
-    pthread_mutex_t m;
-    pthread_cond_t c;
+    pc_mutex m;
+    pc_cond c;
 } FrameQueue;
 
 static void fq_init(FrameQueue *f) {
     memset(f, 0, sizeof(*f));
-    pthread_mutex_init(&f->m, NULL);
-    pthread_cond_init(&f->c, NULL);
+    pc_mutex_init(&f->m);
+    pc_cond_init(&f->c);
 }
 
 static void fq_clear_locked(FrameQueue *f) {
-    for (int i = 0; i < f->count; i++) CVPixelBufferRelease(f->q[(f->rindex + i) % FQ_SIZE].pb);
+    for (int i = 0; i < f->count; i++) pcvb_release(f->q[(f->rindex + i) % FQ_SIZE].pb);
     f->count = 0;
     f->rindex = 0;
 }
 
 static void fq_flush(FrameQueue *f, int serial) {
-    pthread_mutex_lock(&f->m);
+    pc_mutex_lock(&f->m);
     fq_clear_locked(f);
     f->serial = serial;
-    pthread_cond_broadcast(&f->c);
-    pthread_mutex_unlock(&f->m);
+    pc_cond_broadcast(&f->c);
+    pc_mutex_unlock(&f->m);
 }
 
 static void fq_abort(FrameQueue *f) {
-    pthread_mutex_lock(&f->m);
+    pc_mutex_lock(&f->m);
     f->abort = 1;
-    pthread_cond_broadcast(&f->c);
-    pthread_mutex_unlock(&f->m);
+    pc_cond_broadcast(&f->c);
+    pc_mutex_unlock(&f->m);
 }
 
 static void fq_destroy(FrameQueue *f) {
     fq_clear_locked(f);
-    pthread_mutex_destroy(&f->m);
-    pthread_cond_destroy(&f->c);
+    pc_mutex_destroy(&f->m);
+    pc_cond_destroy(&f->c);
 }
 
 // Takes ownership of v.pb.
 static void fq_push(FrameQueue *f, VFrame v) {
-    pthread_mutex_lock(&f->m);
-    while (f->count == FQ_SIZE && !f->abort && v.serial == f->serial) pthread_cond_wait(&f->c, &f->m);
+    pc_mutex_lock(&f->m);
+    while (f->count == FQ_SIZE && !f->abort && v.serial == f->serial) pc_cond_wait(&f->c, &f->m);
     if (f->abort || v.serial != f->serial) {
-        pthread_mutex_unlock(&f->m);
-        CVPixelBufferRelease(v.pb);
+        pc_mutex_unlock(&f->m);
+        pcvb_release(v.pb);
         return;
     }
     v.id = ++f->next_id;
     f->q[(f->rindex + f->count) % FQ_SIZE] = v;
     f->count++;
-    pthread_mutex_unlock(&f->m);
+    pc_mutex_unlock(&f->m);
 }
 
 // Copies entry idx with an extra retain on pb (caller releases). Drops stale entries.
 static int fq_peek(FrameQueue *f, int idx, VFrame *out) {
-    pthread_mutex_lock(&f->m);
+    pc_mutex_lock(&f->m);
     while (f->count > 0 && f->q[f->rindex].serial != f->serial) {
-        CVPixelBufferRelease(f->q[f->rindex].pb);
+        pcvb_release(f->q[f->rindex].pb);
         f->rindex = (f->rindex + 1) % FQ_SIZE;
         f->count--;
-        pthread_cond_broadcast(&f->c);
+        pc_cond_broadcast(&f->c);
     }
     int ok = idx < f->count;
-    if (ok) { *out = f->q[(f->rindex + idx) % FQ_SIZE]; CVPixelBufferRetain(out->pb); }
-    pthread_mutex_unlock(&f->m);
+    if (ok) { *out = f->q[(f->rindex + idx) % FQ_SIZE]; pcvb_retain(out->pb); }
+    pc_mutex_unlock(&f->m);
     return ok;
 }
 
 static void fq_pop_id(FrameQueue *f, uint64_t id) {
-    pthread_mutex_lock(&f->m);
+    pc_mutex_lock(&f->m);
     if (f->count > 0 && f->q[f->rindex].id == id) {
-        CVPixelBufferRelease(f->q[f->rindex].pb);
+        pcvb_release(f->q[f->rindex].pb);
         f->rindex = (f->rindex + 1) % FQ_SIZE;
         f->count--;
-        pthread_cond_broadcast(&f->c);
+        pc_cond_broadcast(&f->c);
     }
-    pthread_mutex_unlock(&f->m);
+    pc_mutex_unlock(&f->m);
 }
 
 static int fq_count(FrameQueue *f) {
-    pthread_mutex_lock(&f->m);
+    pc_mutex_lock(&f->m);
     int n = f->count;
-    pthread_mutex_unlock(&f->m);
+    pc_mutex_unlock(&f->m);
     return n;
 }
 
@@ -226,11 +223,11 @@ struct PCPlayer {
     int astream, vstream;
     int audio_tracks[MAX_AUDIO_TRACKS], n_audio, cur_track;
     AVCodecContext *adec, *vdec;
-    AVBufferRef *hwdev;
+    PCVideoBackend *vb;
     PCOut *out;
     PCOut *kept_out;                 // output kept open between files (receiver stays locked)
     char kept_uid[256];
-    int kept_bitstream, out_bitstream;
+    PCStreamType kept_type, out_type;
     int kept_burst;
     enum AVCodecID bs_codec;         // codec being bitstreamed (AC3 / DTS)
     int burst_bytes;                 // its IEC 61937 burst size
@@ -259,12 +256,12 @@ struct PCPlayer {
     double next_pts;
 
     // threads
-    pthread_t th_demux, th_audio, th_video, th_present;
+    pc_thread th_demux, th_audio, th_video, th_present;
     int have_audio_thread, have_video_thread, threads_running;
     _Atomic int quit, paused;
     PacketQueue aq, vq;
     FrameQueue fq;
-    pthread_mutex_t lock;            // seek request, ext clock, position
+    pc_mutex lock;            // seek request, ext clock, position
     int seek_req;
     double seek_pos;
     _Atomic double seek_target;      // drop decoded data before this pts after a seek
@@ -276,17 +273,13 @@ struct PCPlayer {
     _Atomic double last_video_pts;
     double last_pos;
 
-    // video conversion
-    struct SwsContext *sws;
-    CVPixelBufferPoolRef pool;
-    int pool_w, pool_h;
     int video_hw;
 
     PCInfo info;
 
     // visualiser tap: stereo float @ 48 kHz, timestamped, independent of the output path
     _Atomic int vis_enabled;
-    pthread_mutex_t tap_lock;
+    pc_mutex tap_lock;
     float *tap;                      // TAP_FRAMES * 2, interleaved L/R
     int64_t tap_w;                   // total frames written
     int64_t tap_mpos[TAP_MARKERS];
@@ -301,11 +294,7 @@ struct PCPlayer {
     int art_size;
 };
 
-static double now_sec(void) {
-    static mach_timebase_info_data_t tb;
-    if (tb.denom == 0) mach_timebase_info(&tb);
-    return (double)mach_absolute_time() * tb.numer / tb.denom * 1e-9;
-}
+static double now_sec(void) { return (double)pc_now_ns() * 1e-9; }
 
 static void copy_str(char *dst, int len, const char *src) {
     snprintf(dst, len, "%s", src ? src : "");
@@ -314,8 +303,8 @@ static void copy_str(char *dst, int len, const char *src) {
 PCPlayer *pc_player_create(void) {
     av_log_set_level(AV_LOG_ERROR);
     PCPlayer *p = av_mallocz(sizeof(*p));
-    pthread_mutex_init(&p->lock, NULL);
-    pthread_mutex_init(&p->tap_lock, NULL);
+    pc_mutex_init(&p->lock);
+    pc_mutex_init(&p->tap_lock);
     p->tap = av_calloc(TAP_FRAMES * 2, sizeof(float));
     p->astream = p->vstream = -1;
     return p;
@@ -328,8 +317,8 @@ void pc_player_set_callbacks(PCPlayer *p, PCVideoCallback vcb, PCEventCallback e
 void pc_player_destroy(PCPlayer *p) {
     if (!p) return;
     pc_player_close(p);
-    pthread_mutex_destroy(&p->lock);
-    pthread_mutex_destroy(&p->tap_lock);
+    pc_mutex_destroy(&p->lock);
+    pc_mutex_destroy(&p->tap_lock);
     av_free(p->tap);
     av_free(p);
 }
@@ -344,12 +333,12 @@ static double ext_clock_locked(PCPlayer *p) {
 }
 
 static void ext_start(PCPlayer *p, double pts) {
-    pthread_mutex_lock(&p->lock);
+    pc_mutex_lock(&p->lock);
     p->ext_base_pts = pts;
     p->ext_base_time = now_sec();
     p->ext_paused_pts = pts;
     p->ext_started = 1;
-    pthread_mutex_unlock(&p->lock);
+    pc_mutex_unlock(&p->lock);
 }
 
 static int audio_is_master(PCPlayer *p) {
@@ -362,9 +351,9 @@ static double video_clock(PCPlayer *p) {
         double c = pc_out_clock(p->out);
         return isnan(c) ? NAN : c - atomic_load(&p->av_offset);
     }
-    pthread_mutex_lock(&p->lock);
+    pc_mutex_lock(&p->lock);
     double c = ext_clock_locked(p);
-    pthread_mutex_unlock(&p->lock);
+    pc_mutex_unlock(&p->lock);
     return c;
 }
 
@@ -503,9 +492,9 @@ static void make_silence_burst(PCPlayer *p, const AVChannelLayout *layout, int64
 
 static void tap_reset(PCPlayer *p) {
     swr_free(&p->tap_swr);
-    pthread_mutex_lock(&p->tap_lock);
+    pc_mutex_lock(&p->tap_lock);
     p->tap_mcount = 0;
-    pthread_mutex_unlock(&p->tap_lock);
+    pc_mutex_unlock(&p->tap_lock);
 }
 
 static void tap_feed(PCPlayer *p, const AVFrame *f, double pts) {
@@ -543,7 +532,7 @@ static void tap_feed(PCPlayer *p, const AVFrame *f, double pts) {
     uint8_t *out[1] = { (uint8_t *)p->tap_tmp };
     int n = swr_convert(p->tap_swr, out, max_out, (const uint8_t **)f->extended_data, f->nb_samples);
     if (n <= 0) return;
-    pthread_mutex_lock(&p->tap_lock);
+    pc_mutex_lock(&p->tap_lock);
     if (!isnan(first_pts)) {
         int i = (p->tap_mhead + p->tap_mcount) % TAP_MARKERS;
         if (p->tap_mcount == TAP_MARKERS) { p->tap_mhead = (p->tap_mhead + 1) % TAP_MARKERS; p->tap_mcount--; }
@@ -557,7 +546,7 @@ static void tap_feed(PCPlayer *p, const AVFrame *f, double pts) {
         p->tap[idx + 1] = p->tap_tmp[k * 2 + 1];
     }
     p->tap_w += n;
-    pthread_mutex_unlock(&p->tap_lock);
+    pc_mutex_unlock(&p->tap_lock);
 }
 
 void pc_player_set_vis_enabled(PCPlayer *p, int enabled) { atomic_store(&p->vis_enabled, enabled ? 1 : 0); }
@@ -568,7 +557,7 @@ int pc_player_vis_samples(PCPlayer *p, float *lr, int frames) {
     if (isnan(clock)) return 0;
     clock -= atomic_load(&p->av_offset);   // match the picture: what the amp is playing now
     int got = 0;
-    pthread_mutex_lock(&p->tap_lock);
+    pc_mutex_lock(&p->tap_lock);
     int best = -1;
     for (int i = p->tap_mcount - 1; i >= 0; i--) {
         int k = (p->tap_mhead + i) % TAP_MARKERS;
@@ -587,7 +576,7 @@ int pc_player_vis_samples(PCPlayer *p, float *lr, int frames) {
             got = frames;
         }
     }
-    pthread_mutex_unlock(&p->tap_lock);
+    pc_mutex_unlock(&p->tap_lock);
     return got;
 }
 
@@ -731,8 +720,8 @@ static void audio_drain(PCPlayer *p, AVFrame *frame, int serial) {
     // wait for the ring to play out, then report audio end
     while (!atomic_load(&p->quit) && atomic_load(&p->aq.serial) == serial &&
            pc_out_buffered_seconds(p->out) > 0.005)
-        usleep(10000);
-    usleep((useconds_t)(pc_out_latency(p->out) * 1e6));
+        pc_sleep_us(10000);
+    pc_sleep_us((int64_t)(pc_out_latency(p->out) * 1e6));
     if (atomic_load(&p->aq.serial) == serial) atomic_store(&p->audio_eof, 1);
 }
 
@@ -785,63 +774,6 @@ static void *audio_thread(void *arg) {
 // ---------------------------------------------------------------------------
 // video thread
 
-static enum AVPixelFormat get_hw_format(AVCodecContext *c, const enum AVPixelFormat *fmts) {
-    (void)c;
-    for (const enum AVPixelFormat *f = fmts; *f != AV_PIX_FMT_NONE; f++)
-        if (*f == AV_PIX_FMT_VIDEOTOOLBOX) return *f;
-    for (const enum AVPixelFormat *f = fmts; *f != AV_PIX_FMT_NONE; f++) {
-        const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(*f);
-        if (d && !(d->flags & AV_PIX_FMT_FLAG_HWACCEL)) return *f;
-    }
-    return fmts[0];
-}
-
-static void set_sar(CVPixelBufferRef pb, AVRational sar) {
-    if (sar.num <= 0 || sar.den <= 0 || sar.num == sar.den) return;
-    CFNumberRef h = CFNumberCreate(NULL, kCFNumberIntType, &sar.num);
-    CFNumberRef v = CFNumberCreate(NULL, kCFNumberIntType, &sar.den);
-    const void *keys[] = { kCVImageBufferPixelAspectRatioHorizontalSpacingKey, kCVImageBufferPixelAspectRatioVerticalSpacingKey };
-    const void *vals[] = { h, v };
-    CFDictionaryRef d = CFDictionaryCreate(NULL, keys, vals, 2, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-    CVBufferSetAttachment(pb, kCVImageBufferPixelAspectRatioKey, d, kCVAttachmentMode_ShouldPropagate);
-    CFRelease(d); CFRelease(h); CFRelease(v);
-}
-
-static CVPixelBufferRef sw_frame_to_pb(PCPlayer *p, AVFrame *f) {
-    if (!p->pool || p->pool_w != f->width || p->pool_h != f->height) {
-        if (p->pool) CVPixelBufferPoolRelease(p->pool);
-        p->pool = NULL;
-        int fmt = kCVPixelFormatType_32BGRA;
-        CFNumberRef w = CFNumberCreate(NULL, kCFNumberIntType, &f->width);
-        CFNumberRef h = CFNumberCreate(NULL, kCFNumberIntType, &f->height);
-        CFNumberRef pf = CFNumberCreate(NULL, kCFNumberIntType, &fmt);
-        CFDictionaryRef io = CFDictionaryCreate(NULL, NULL, NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-        const void *keys[] = { kCVPixelBufferWidthKey, kCVPixelBufferHeightKey, kCVPixelBufferPixelFormatTypeKey, kCVPixelBufferIOSurfacePropertiesKey };
-        const void *vals[] = { w, h, pf, io };
-        CFDictionaryRef attrs = CFDictionaryCreate(NULL, keys, vals, 4, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-        CVPixelBufferPoolCreate(NULL, NULL, attrs, &p->pool);
-        CFRelease(attrs); CFRelease(io); CFRelease(pf); CFRelease(h); CFRelease(w);
-        p->pool_w = f->width;
-        p->pool_h = f->height;
-    }
-    CVPixelBufferRef pb = NULL;
-    if (!p->pool || CVPixelBufferPoolCreatePixelBuffer(NULL, p->pool, &pb) != kCVReturnSuccess) return NULL;
-    p->sws = sws_getCachedContext(p->sws, f->width, f->height, f->format, f->width, f->height,
-                                  AV_PIX_FMT_BGRA, SWS_BILINEAR, NULL, NULL, NULL);
-    if (!p->sws) { CVPixelBufferRelease(pb); return NULL; }
-    int cs = f->colorspace != AVCOL_SPC_UNSPECIFIED ? f->colorspace : (f->height >= 720 ? AVCOL_SPC_BT709 : AVCOL_SPC_SMPTE170M);
-    int src_full = f->color_range == AVCOL_RANGE_JPEG;
-    sws_setColorspaceDetails(p->sws, sws_getCoefficients(cs), src_full, sws_getCoefficients(AVCOL_SPC_BT709), 1, 0, 1 << 16, 1 << 16);
-    CVPixelBufferLockBaseAddress(pb, 0);
-    uint8_t *dst[4] = { CVPixelBufferGetBaseAddress(pb), NULL, NULL, NULL };
-    int stride[4] = { (int)CVPixelBufferGetBytesPerRow(pb), 0, 0, 0 };
-    sws_scale(p->sws, (const uint8_t *const *)f->data, f->linesize, 0, f->height, dst, stride);
-    CVPixelBufferUnlockBaseAddress(pb, 0);
-    CVBufferSetAttachment(pb, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, kCVAttachmentMode_ShouldPropagate);
-    CVBufferSetAttachment(pb, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, kCVAttachmentMode_ShouldPropagate);
-    return pb;
-}
-
 static void video_frame(PCPlayer *p, AVFrame *f, int serial) {
     AVStream *st = p->fmt->streams[p->vstream];
     double dur = f->duration > 0 ? f->duration * av_q2d(st->time_base)
@@ -851,16 +783,10 @@ static void video_frame(PCPlayer *p, AVFrame *f, int serial) {
                      : atomic_load(&p->last_video_pts) + dur;
     double target = atomic_load(&p->seek_target);
     if (!isnan(target) && pts + dur * 0.5 < target) return;
-    CVPixelBufferRef pb;
-    if (f->format == AV_PIX_FMT_VIDEOTOOLBOX) {
-        pb = (CVPixelBufferRef)f->data[3];
-        CVPixelBufferRetain(pb);
-        p->video_hw = 1;
-    } else {
-        pb = sw_frame_to_pb(p, f);
-    }
+    int hw = 0;
+    void *pb = pcvb_make_frame(p->vb, f, &hw);
     if (!pb) return;
-    set_sar(pb, f->sample_aspect_ratio);
+    if (hw) p->video_hw = 1;
     fq_push(&p->fq, (VFrame){ .pb = pb, .pts = pts, .dur = dur, .serial = serial });
 }
 
@@ -900,9 +826,9 @@ static void check_eof(PCPlayer *p) {
     if (atomic_load(&p->eof_sent) || !atomic_load(&p->demux_eof)) return;
     if (p->astream >= 0 && !atomic_load(&p->audio_eof)) return;
     if (p->vstream >= 0 && (!atomic_load(&p->video_eof) || fq_count(&p->fq) > 0)) return;
-    pthread_mutex_lock(&p->lock);
+    pc_mutex_lock(&p->lock);
     int seeking = p->seek_req;
-    pthread_mutex_unlock(&p->lock);
+    pc_mutex_unlock(&p->lock);
     if (seeking) return;
     atomic_store(&p->eof_sent, 1);
     if (p->ecb) p->ecb(p->cbctx, PC_EVENT_EOF, NULL);
@@ -918,42 +844,42 @@ static void *present_thread(void *arg) {
     PCPlayer *p = arg;
     while (!atomic_load(&p->quit)) {
         check_eof(p);
-        if (p->vstream < 0) { usleep(20000); continue; }
+        if (p->vstream < 0) { pc_sleep_us(20000); continue; }
         VFrame f;
-        if (!fq_peek(&p->fq, 0, &f)) { usleep(2000); continue; }
+        if (!fq_peek(&p->fq, 0, &f)) { pc_sleep_us(2000); continue; }
         if (atomic_exchange(&p->force_show, 0)) {
             // first frame after open/seek: show immediately, even when paused
             show(p, &f);
             if (!audio_is_master(p)) {
                 ext_start(p, f.pts);
                 if (atomic_load(&p->paused)) {
-                    pthread_mutex_lock(&p->lock); p->ext_paused_pts = f.pts; pthread_mutex_unlock(&p->lock);
+                    pc_mutex_lock(&p->lock); p->ext_paused_pts = f.pts; pc_mutex_unlock(&p->lock);
                 }
             }
-            CVPixelBufferRelease(f.pb);
+            pcvb_release(f.pb);
             continue;
         }
-        if (atomic_load(&p->paused)) { CVPixelBufferRelease(f.pb); usleep(5000); continue; }
+        if (atomic_load(&p->paused)) { pcvb_release(f.pb); pc_sleep_us(5000); continue; }
         double clock = video_clock(p);
         if (isnan(clock)) {
             if (!audio_is_master(p)) { ext_start(p, f.pts); clock = f.pts; }
-            else { CVPixelBufferRelease(f.pb); usleep(2000); continue; }
+            else { pcvb_release(f.pb); pc_sleep_us(2000); continue; }
         }
         double diff = f.pts - clock;
         if (diff > 0.002) {
-            CVPixelBufferRelease(f.pb);
+            pcvb_release(f.pb);
             if (diff > 1.0 && audio_is_master(p)) diff = 0.01; // wait for the audio clock to settle
-            usleep((useconds_t)(fmin(diff, 0.01) * 1e6));
+            pc_sleep_us((int64_t)(fmin(diff, 0.01) * 1e6));
             continue;
         }
         VFrame nx;
         if (fq_peek(&p->fq, 1, &nx)) {
             int late = nx.pts <= clock;
-            CVPixelBufferRelease(nx.pb);
-            if (late) { fq_pop_id(&p->fq, f.id); CVPixelBufferRelease(f.pb); continue; } // drop
+            pcvb_release(nx.pb);
+            if (late) { fq_pop_id(&p->fq, f.id); pcvb_release(f.pb); continue; } // drop
         }
         show(p, &f);
-        CVPixelBufferRelease(f.pb);
+        pcvb_release(f.pb);
     }
     return NULL;
 }
@@ -963,10 +889,10 @@ static void *present_thread(void *arg) {
 
 static int queue_enough(PCPlayer *p, PacketQueue *q, int stream) {
     if (stream < 0) return 1;
-    pthread_mutex_lock(&q->m);
+    pc_mutex_lock(&q->m);
     double dur = q->duration * av_q2d(p->fmt->streams[stream]->time_base);
     int enough = q->count > 25 && (q->duration == 0 || dur > 2.0);
-    pthread_mutex_unlock(&q->m);
+    pc_mutex_unlock(&q->m);
     return enough;
 }
 
@@ -983,29 +909,29 @@ static void do_seek(PCPlayer *p, double pos) {
     atomic_store(&p->video_eof, 0);
     atomic_store(&p->eof_sent, 0);
     atomic_store(&p->force_show, 1);
-    pthread_mutex_lock(&p->lock);
+    pc_mutex_lock(&p->lock);
     p->ext_started = 0;
     p->ext_paused_pts = pos;
-    pthread_mutex_unlock(&p->lock);
+    pc_mutex_unlock(&p->lock);
 }
 
 static void *demux_thread(void *arg) {
     PCPlayer *p = arg;
     AVPacket *pkt = av_packet_alloc();
     while (!atomic_load(&p->quit)) {
-        pthread_mutex_lock(&p->lock);
+        pc_mutex_lock(&p->lock);
         if (p->seek_req) {
             double pos = p->seek_pos;
-            pthread_mutex_unlock(&p->lock);
+            pc_mutex_unlock(&p->lock);
             do_seek(p, pos);
-            pthread_mutex_lock(&p->lock);
+            pc_mutex_lock(&p->lock);
             if (p->seek_pos == pos) p->seek_req = 0;
         }
-        pthread_mutex_unlock(&p->lock);
+        pc_mutex_unlock(&p->lock);
 
         int64_t total = p->aq.bytes + p->vq.bytes;
         if ((queue_enough(p, &p->aq, p->astream) && queue_enough(p, &p->vq, p->vstream)) || total > 256 * 1024 * 1024) {
-            usleep(10000);
+            pc_sleep_us(10000);
             continue;
         }
         int ret = av_read_frame(p->fmt, pkt);
@@ -1015,7 +941,7 @@ static void *demux_thread(void *arg) {
                 if (p->vstream >= 0) pq_put(&p->vq, NULL);
                 atomic_store(&p->demux_eof, 1);
             }
-            usleep(10000);
+            pc_sleep_us(10000);
             continue;
         }
         if (pkt->stream_index == p->astream) pq_put(&p->aq, pkt);
@@ -1042,14 +968,14 @@ static void describe_audio_stream(AVStream *st, char *buf, int len) {
              profile ? " " : "", profile ? profile : "", layout, st->codecpar->sample_rate);
 }
 
-static int open_decoder(AVStream *st, AVCodecContext **out, AVBufferRef *hw) {
+static int open_decoder(AVStream *st, AVCodecContext **out, PCVideoBackend *vb) {
     const AVCodec *c = avcodec_find_decoder(st->codecpar->codec_id);
     if (!c) return -1;
     AVCodecContext *d = avcodec_alloc_context3(c);
     avcodec_parameters_to_context(d, st->codecpar);
     d->pkt_timebase = st->time_base;
     d->thread_count = 0;
-    if (hw) { d->hw_device_ctx = av_buffer_ref(hw); d->get_format = get_hw_format; }
+    if (vb) pcvb_prepare_decoder(vb, d);
     if (avcodec_open2(d, c, NULL) < 0) { avcodec_free_context(&d); return -1; }
     *out = d;
     return 0;
@@ -1065,13 +991,14 @@ static void drop_kept_output(PCPlayer *p) {
     p->kept_out = NULL;
 }
 
-static PCOut *take_output(PCPlayer *p, int bitstream, int burst, char *oerr, int len) {
+static PCOut *take_output(PCPlayer *p, PCStreamType type, int burst, char *oerr, int len) {
+    int bitstream = type != PC_STREAM_PCM;
     const PCConfig *cfg = &p->cfg;
     if (cfg->dump_path) return pc_out_open_file(cfg->dump_path, bitstream, 2, 48000, oerr, len);
     const char *uid = cfg->device_uid ? cfg->device_uid : "";
     if (p->kept_out) {
         // reuse only for the same device, mode and burst size (AC3 <-> DTS needs a fresh stream)
-        if (p->kept_bitstream == bitstream && (!bitstream || p->kept_burst == burst) && strcmp(p->kept_uid, uid) == 0) {
+        if (p->kept_type == type && (!bitstream || p->kept_burst == burst) && strcmp(p->kept_uid, uid) == 0) {
             PCOut *o = p->kept_out;
             p->kept_out = NULL;
             pc_out_flush(o);
@@ -1079,7 +1006,7 @@ static PCOut *take_output(PCPlayer *p, int bitstream, int burst, char *oerr, int
         }
         drop_kept_output(p);
     }
-    PCOut *o = pc_out_open(uid, bitstream, oerr, len);
+    PCOut *o = pc_out_open(uid, type, oerr, len);
     if (o && bitstream) pc_out_set_burst_size(o, burst);
     return o;
 }
@@ -1130,7 +1057,8 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
     char oerr[256] = "";
     char fallback[300] = "";
     if (mode != PC_MODE_PCM) {
-        p->out = take_output(p, 1, p->burst_bytes, oerr, sizeof(oerr));
+        p->out = take_output(p, p->bs_codec == AV_CODEC_ID_DTS ? PC_STREAM_IEC61937_DTS : PC_STREAM_IEC61937_AC3,
+                             p->burst_bytes, oerr, sizeof(oerr));
         if (!p->out) {
             if (mode == PC_MODE_PASSTHROUGH && !p->adec) {
                 snprintf(err, errlen, "Bitstream output failed (%s) and no decoder available", oerr);
@@ -1141,11 +1069,12 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
         }
     }
     if (mode == PC_MODE_PCM) {
-        p->out = take_output(p, 0, 0, oerr, sizeof(oerr));
+        p->out = take_output(p, PC_STREAM_PCM, 0, oerr, sizeof(oerr));
         if (!p->out) { snprintf(err, errlen, "Audio output failed: %s", oerr); return -1; }
     }
     p->mode = mode;
-    p->out_bitstream = mode != PC_MODE_PCM;
+    p->out_type = mode == PC_MODE_PCM ? PC_STREAM_PCM
+                : p->bs_codec == AV_CODEC_ID_DTS ? PC_STREAM_IEC61937_DTS : PC_STREAM_IEC61937_AC3;
     p->next_pts = NAN;
 
     AVChannelLayout enc_layout = { 0 };
@@ -1253,8 +1182,8 @@ int pc_player_open(PCPlayer *p, const char *path, const PCConfig *cfg, int pause
     if (p->vstream >= 0) {
         AVStream *st = p->fmt->streams[p->vstream];
         st->discard = AVDISCARD_DEFAULT;
-        av_hwdevice_ctx_create(&p->hwdev, AV_HWDEVICE_TYPE_VIDEOTOOLBOX, NULL, NULL, 0);
-        if (open_decoder(st, &p->vdec, p->hwdev) < 0 && (!p->hwdev || open_decoder(st, &p->vdec, NULL) < 0)) {
+        p->vb = pcvb_create();
+        if (open_decoder(st, &p->vdec, p->vb) < 0 && open_decoder(st, &p->vdec, NULL) < 0) {
             if (p->astream < 0) { snprintf(err, errlen, "No decoder for video codec"); goto fail; }
             st->discard = AVDISCARD_ALL;
             p->vstream = -1;
@@ -1307,10 +1236,10 @@ int pc_player_open(PCPlayer *p, const char *path, const PCConfig *cfg, int pause
         if (pc_out_start(p->out) < 0) { snprintf(err, errlen, "Could not start the audio device"); goto fail_threads; }
     }
     p->threads_running = 1;
-    pthread_create(&p->th_demux, NULL, demux_thread, p);
-    if (p->astream >= 0) { pthread_create(&p->th_audio, NULL, audio_thread, p); p->have_audio_thread = 1; }
-    if (p->vstream >= 0) { pthread_create(&p->th_video, NULL, video_thread, p); p->have_video_thread = 1; }
-    pthread_create(&p->th_present, NULL, present_thread, p);
+    pc_thread_create(&p->th_demux, demux_thread, p);
+    if (p->astream >= 0) { pc_thread_create(&p->th_audio, audio_thread, p); p->have_audio_thread = 1; }
+    if (p->vstream >= 0) { pc_thread_create(&p->th_video, video_thread, p); p->have_video_thread = 1; }
+    pc_thread_create(&p->th_present, present_thread, p);
     return 0;
 
 fail_threads:
@@ -1335,10 +1264,10 @@ static void close_internal(PCPlayer *p, int keep_out) {
         pq_abort(&p->aq);
         pq_abort(&p->vq);
         fq_abort(&p->fq);
-        pthread_join(p->th_demux, NULL);
-        if (p->have_audio_thread) pthread_join(p->th_audio, NULL);
-        if (p->have_video_thread) pthread_join(p->th_video, NULL);
-        pthread_join(p->th_present, NULL);
+        pc_thread_join(p->th_demux);
+        if (p->have_audio_thread) pc_thread_join(p->th_audio);
+        if (p->have_video_thread) pc_thread_join(p->th_video);
+        pc_thread_join(p->th_present);
         pq_destroy(&p->aq);
         pq_destroy(&p->vq);
         fq_destroy(&p->fq);
@@ -1347,7 +1276,7 @@ static void close_internal(PCPlayer *p, int keep_out) {
     if (keep_out && p->out && !p->cfg.dump_path) {
         drop_kept_output(p);
         p->kept_out = p->out;
-        p->kept_bitstream = p->out_bitstream;
+        p->kept_type = p->out_type;
         p->kept_burst = p->burst_bytes;
         snprintf(p->kept_uid, sizeof(p->kept_uid), "%s", p->cfg.device_uid ? p->cfg.device_uid : "");
     } else {
@@ -1357,15 +1286,14 @@ static void close_internal(PCPlayer *p, int keep_out) {
     avcodec_free_context(&p->adec);
     avcodec_free_context(&p->vdec);
     avcodec_free_context(&p->aenc);
-    av_buffer_unref(&p->hwdev);
     swr_free(&p->swr);
     swr_free(&p->tap_swr);
     av_channel_layout_uninit(&p->tap_in_layout);
     av_freep(&p->tap_tmp);
     p->tap_tmp_frames = 0;
-    pthread_mutex_lock(&p->tap_lock);
+    pc_mutex_lock(&p->tap_lock);
     p->tap_mcount = 0;
-    pthread_mutex_unlock(&p->tap_lock);
+    pc_mutex_unlock(&p->tap_lock);
     av_channel_layout_uninit(&p->swr_in_layout);
     av_channel_layout_uninit(&p->out_layout);
     if (p->cvt) { av_freep(&p->cvt[0]); av_freep(&p->cvt); }
@@ -1377,10 +1305,8 @@ static void close_internal(PCPlayer *p, int keep_out) {
     av_freep(&p->burst);
     p->burst_cap = p->burst_len = 0;
     p->enc_counter = p->spdif_ts = 0;
-    sws_freeContext(p->sws);
-    p->sws = NULL;
-    if (p->pool) { CVPixelBufferPoolRelease(p->pool); p->pool = NULL; }
-    p->pool_w = p->pool_h = 0;
+    pcvb_destroy(p->vb);   // after the threads: queued frames are already released
+    p->vb = NULL;
     avformat_close_input(&p->fmt);
     av_freep(&p->art);
     p->art_size = 0;
@@ -1395,7 +1321,7 @@ static void close_internal(PCPlayer *p, int keep_out) {
 
 void pc_player_set_paused(PCPlayer *p, int paused) {
     if (!p->is_open) return;
-    pthread_mutex_lock(&p->lock);
+    pc_mutex_lock(&p->lock);
     if (paused && !p->paused) {
         p->ext_paused_pts = ext_clock_locked(p);
         if (isnan(p->ext_paused_pts)) p->ext_paused_pts = atomic_load(&p->last_video_pts);
@@ -1404,7 +1330,7 @@ void pc_player_set_paused(PCPlayer *p, int paused) {
         p->ext_base_time = now_sec();
     }
     atomic_store(&p->paused, paused ? 1 : 0);
-    pthread_mutex_unlock(&p->lock);
+    pc_mutex_unlock(&p->lock);
     if (p->out) pc_out_set_paused(p->out, paused);
 }
 
@@ -1414,32 +1340,32 @@ void pc_player_seek(PCPlayer *p, double seconds) {
     if (!p->is_open) return;
     if (seconds < 0) seconds = 0;
     if (p->info.duration > 0 && seconds > p->info.duration - 0.5) seconds = fmax(0, p->info.duration - 0.5);
-    pthread_mutex_lock(&p->lock);
+    pc_mutex_lock(&p->lock);
     p->seek_req = 1;
     p->seek_pos = seconds;
     p->last_pos = seconds;
-    pthread_mutex_unlock(&p->lock);
+    pc_mutex_unlock(&p->lock);
 }
 
 double pc_player_position(PCPlayer *p) {
     if (!p->is_open) return 0;
-    pthread_mutex_lock(&p->lock);
-    if (p->seek_req) { double s = p->seek_pos; pthread_mutex_unlock(&p->lock); return s; }
-    pthread_mutex_unlock(&p->lock);
+    pc_mutex_lock(&p->lock);
+    if (p->seek_req) { double s = p->seek_pos; pc_mutex_unlock(&p->lock); return s; }
+    pc_mutex_unlock(&p->lock);
     double c;
     if (audio_is_master(p)) {
         c = pc_out_clock(p->out);
         double t = atomic_load(&p->seek_target);
         if (!isnan(c) && !isnan(t) && c < t - 1.0) c = NAN; // stale clock right after a seek
     } else {
-        pthread_mutex_lock(&p->lock);
+        pc_mutex_lock(&p->lock);
         c = ext_clock_locked(p);
-        pthread_mutex_unlock(&p->lock);
+        pc_mutex_unlock(&p->lock);
     }
-    pthread_mutex_lock(&p->lock);
+    pc_mutex_lock(&p->lock);
     if (!isnan(c)) p->last_pos = c;
     double r = p->last_pos;
-    pthread_mutex_unlock(&p->lock);
+    pc_mutex_unlock(&p->lock);
     if (r < 0) r = 0;
     if (p->info.duration > 0 && r > p->info.duration) r = p->info.duration;
     return r;
@@ -1451,7 +1377,7 @@ void pc_player_get_info(PCPlayer *p, PCInfo *info) {
     *info = p->info;
     if (p->vstream >= 0 && p->vdec)
         snprintf(info->video + strlen(info->video), sizeof(info->video) - strlen(info->video),
-                 p->video_hw ? " (VideoToolbox)" : " (software)");
+                 " (%s)", p->video_hw ? pcvb_hw_name() : "software");
 }
 
 int pc_player_audio_track_count(PCPlayer *p) { return p->is_open ? p->n_audio : 0; }

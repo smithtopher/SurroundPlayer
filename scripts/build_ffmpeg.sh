@@ -23,7 +23,7 @@ fi
 echo "$SHA256  $TARBALL" | shasum -a 256 -c -
 
 # Bump/extend this when the configure options change; it triggers a rebuild.
-OPTIONS="encoders=ac3,dca muxers=spdif v1"
+OPTIONS="encoders=ac3,dca muxers=spdif patches=$(cat patches/ffmpeg/*.patch | shasum | cut -c1-12) v2"
 
 for ARCH in $ARCHS; do
     PREFIX="$ROOT/$ARCH"
@@ -34,6 +34,8 @@ for ARCH in $ARCHS; do
     BUILD="$SRC_DIR/build-$ARCH"
     rm -rf "$BUILD"; mkdir -p "$BUILD"
     tar -xf "$TARBALL" -C "$BUILD" --strip-components 1
+    # local fixes to FFmpeg (see patches/ffmpeg/*.patch for what and why)
+    for pf in "$PWD"/patches/ffmpeg/*.patch; do patch -d "$BUILD" -p1 --forward < "$pf"; done
     cd "$BUILD"
     ASM=()
     if [ "$ARCH" = x86_64 ] && ! command -v nasm >/dev/null; then

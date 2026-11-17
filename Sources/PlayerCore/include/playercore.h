@@ -5,10 +5,19 @@
 #define PLAYERCORE_H
 
 #include <stdint.h>
-#include <CoreVideo/CoreVideo.h>
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+// Windows: build the engine as playercore.dll with -DPC_BUILD_DLL (exports), consumers
+// get imports. Elsewhere it's a plain static library.
+#if defined(_WIN32) && defined(PC_BUILD_DLL)
+#define PC_API __declspec(dllexport)
+#elif defined(_WIN32) && defined(PC_USE_DLL)
+#define PC_API __declspec(dllimport)
+#else
+#define PC_API
 #endif
 
 typedef struct PCPlayer PCPlayer;
@@ -67,40 +76,44 @@ typedef struct {
     int is_default;
 } PCDevice;
 
-// pb is only valid for the duration of the call; retain it to keep it.
-typedef void (*PCVideoCallback)(void *ctx, CVPixelBufferRef pb, double pts);
+// A decoded video frame, ready to display. Its type depends on the platform's video
+// back-end: macOS: CVPixelBufferRef; Windows (planned): ID3D11Texture2D + array slice;
+// stub back-end: refcounted AVFrame. Only valid for the duration of the callback;
+// retain it with the platform's own mechanism (e.g. CVPixelBufferRetain) to keep it.
+typedef void *PCNativeFrame;
+typedef void (*PCVideoCallback)(void *ctx, PCNativeFrame frame, double pts);
 typedef void (*PCEventCallback)(void *ctx, int event, const char *message);
 
-PCPlayer *pc_player_create(void);
-void pc_player_destroy(PCPlayer *p);
-void pc_player_set_callbacks(PCPlayer *p, PCVideoCallback vcb, PCEventCallback ecb, void *ctx);
+PC_API PCPlayer *pc_player_create(void);
+PC_API void pc_player_destroy(PCPlayer *p);
+PC_API void pc_player_set_callbacks(PCPlayer *p, PCVideoCallback vcb, PCEventCallback ecb, void *ctx);
 
 // Opens and starts playback (paused if `paused`). Returns 0 on success.
-int pc_player_open(PCPlayer *p, const char *path, const PCConfig *cfg, int paused, char *err, int errlen);
-void pc_player_close(PCPlayer *p);
+PC_API int pc_player_open(PCPlayer *p, const char *path, const PCConfig *cfg, int paused, char *err, int errlen);
+PC_API void pc_player_close(PCPlayer *p);
 
-void pc_player_set_paused(PCPlayer *p, int paused);
-int pc_player_is_paused(PCPlayer *p);
-void pc_player_seek(PCPlayer *p, double seconds);
-double pc_player_position(PCPlayer *p);
-void pc_player_set_av_offset(PCPlayer *p, double seconds);
-void pc_player_get_info(PCPlayer *p, PCInfo *info);
+PC_API void pc_player_set_paused(PCPlayer *p, int paused);
+PC_API int pc_player_is_paused(PCPlayer *p);
+PC_API void pc_player_seek(PCPlayer *p, double seconds);
+PC_API double pc_player_position(PCPlayer *p);
+PC_API void pc_player_set_av_offset(PCPlayer *p, double seconds);
+PC_API void pc_player_get_info(PCPlayer *p, PCInfo *info);
 
-int pc_player_audio_track_count(PCPlayer *p);
-void pc_player_audio_track_name(PCPlayer *p, int index, char *buf, int len);
-int pc_player_current_audio_track(PCPlayer *p);
+PC_API int pc_player_audio_track_count(PCPlayer *p);
+PC_API void pc_player_audio_track_name(PCPlayer *p, int index, char *buf, int len);
+PC_API int pc_player_current_audio_track(PCPlayer *p);
 
 // Embedded cover art (JPEG/PNG bytes), valid until close. NULL if none.
-const uint8_t *pc_player_cover_art(PCPlayer *p, int *size);
+PC_API const uint8_t *pc_player_cover_art(PCPlayer *p, int *size);
 
-int pc_list_output_devices(PCDevice *out, int max);
+PC_API int pc_list_output_devices(PCDevice *out, int max);
 
 // Visualiser tap. When enabled, decoded audio is also kept as stereo float @ 48 kHz.
 // pc_player_vis_samples copies the `frames` L/R frames that are leaving the speakers
 // right now (interleaved, so lr must hold frames*2 floats). Returns frames, or 0.
-void pc_player_set_vis_enabled(PCPlayer *p, int enabled);
-int pc_player_vis_samples(PCPlayer *p, float *lr, int frames);
-void pc_player_debug(PCPlayer *p); // dumps internal state to stderr
+PC_API void pc_player_set_vis_enabled(PCPlayer *p, int enabled);
+PC_API int pc_player_vis_samples(PCPlayer *p, float *lr, int frames);
+PC_API void pc_player_debug(PCPlayer *p); // dumps internal state to stderr
 
 #ifdef __cplusplus
 }
