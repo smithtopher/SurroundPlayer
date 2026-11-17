@@ -9,17 +9,22 @@ docs; this file is the context for continuing development.
 - **macOS: done.** Apple Silicon, Intel and universal builds; see the sections below.
 - **Next: Windows 11 port.** The engine was restructured for it: portable core +
   per-OS back-ends.
-  - **On a Windows machine, start with `docs/PORTING_WINDOWS.md`, step 1.** Get the
-    engine core + stub back-ends + `tools/pcdump.c` building, then make
-    `bash scripts/regress.sh <pcdump.exe>` print `ALL PASSED`. Only after that, write
-    WASAPI, then D3D11VA, then the WinUI 3 app.
-  - **Before any device testing, ask the user how the PC is connected.** Same Samsung TV
-    over HDMI? Same amp on optical? And confirm the testing rule below (silent files only).
-  - **Not yet done for Windows:**
-    - No Windows build system yet. CMake building the C engine with clang-cl is the
-      suggested route.
-    - The Win32 branch of `pc_platform.h` was written on macOS and **has never been
-      compiled**. Treat it as a draft.
+  - **Step 1 done (2026-11-17):** engine core + stub back-ends + `pcdump.exe` build with
+    clang-cl, and `regress.sh` prints `ALL PASSED` on Windows 11. The Win32 branch of
+    `pc_platform.h` compiled and worked unchanged. **Next: step 2, WASAPI** (then D3D11VA,
+    then the WinUI 3 app), see `docs/PORTING_WINDOWS.md`.
+  - **The Windows PC is connected the same way:** HDMI → Samsung TV → optical → AC3 amp.
+    The user confirmed the testing rule below (silent files only) for it.
+  - **Windows build (no PATH setup needed):**
+    - Toolchain: VS 2022 Build Tools (C++ + Clang: clang-cl 19, CMake, Ninja) and MSYS2
+      (`C:\msys64`: make, nasm, patch, diffutils, pkgconf; UCRT64 python + ffmpeg for tests).
+    - `scripts\build_ffmpeg_win.ps1`: MSVC static FFmpeg 9.0.2 + patches → `vendor/ffmpeg/windows-x64`
+      (`.lib` names, static CRT /MT, w32threads, d3d11va/dxva2). Same `OPTIONS` stamp scheme.
+    - `scripts\build_win.ps1`: `CMakeLists.txt` → `.build\win-release\pcdump.exe`.
+    - `scripts\win_env.ps1`: imports the VS x64 environment (`Enter-PcDevShell`).
+    - Test: `MSYSTEM=UCRT64` bash: `bash scripts/regress.sh .build/win-release/pcdump.exe`.
+    - **zlib/bzlib are not in the Windows FFmpeg yet** (macOS has them). PNG cover art and
+      zlib-compressed MKV tracks need zlib: add it before the app relies on artwork.
   - **What's macOS-only:** the macOS-only parts below are marked **(macOS)**.
     - Swift, `Package.swift`, `build_app.sh`, `build_ffmpeg.sh`, `check_portable.sh`
       (nm/clang/framework flags), `pctest` and all CoreAudio notes.

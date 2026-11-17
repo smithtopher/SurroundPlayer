@@ -27,14 +27,15 @@ symbols, and that build produces byte-identical output to the macOS build.
   Agree that device tests use silent media only.
 - The repo's `.gitattributes` keeps `*.sh` / `*.patch` LF. If scripts fail with `$'\r'`
   errors, the checkout predates it: run `git add --renormalize .` or re-clone.
-- `pc_platform.h`'s Win32 branch has **never been compiled** (it was written on macOS).
-  Expect small fixes. Check thread creation, the QPC clock and SRWLOCK/condition-variable
-  pairing first.
-- There is no Windows build system yet. Suggested: a `CMakeLists.txt` (clang-cl) with
-  three targets: `playercore` (static, stub back-ends, for step 1), `pcdump`, and later
-  `playercore.dll` with the real back-ends.
+- Build system: `CMakeLists.txt` (clang-cl) has `playercore_stub` (static, stub back-ends)
+  and `pcdump`; add `playercore.dll` with the real back-ends in steps 2–4.
 
-## Step 1 — engine builds and dumps on Windows (stub back-ends)
+## Step 1 — engine builds and dumps on Windows (stub back-ends) — DONE 2026-11-17
+
+Done as planned: `scripts\build_ffmpeg_win.ps1` (MSVC FFmpeg), `CMakeLists.txt` +
+`scripts\build_win.ps1` (clang-cl), and `regress.sh` printed `ALL PASSED` with
+`.build/win-release/pcdump.exe`. `pc_platform.h`'s Win32 branch needed no changes.
+Still open: zlib/bzlib in the Windows FFmpeg build (PNG cover art needs zlib).
 
 1. **Toolchain.** The C engine uses C11 `<stdatomic.h>`, including `_Atomic double`.
    Use **clang-cl** (Visual Studio's LLVM component) or MSYS2 clang. MSVC's own
