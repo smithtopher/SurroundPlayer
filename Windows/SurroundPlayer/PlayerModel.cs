@@ -131,6 +131,7 @@ public sealed class PlayerModel : Observable
             if (_current != null) _current.Indicator = "";
             _current = value;
             Raise();
+            Raise(nameof(ShowsVisualizer));
             UpdateIndicator();
         }
     }
@@ -206,6 +207,41 @@ public sealed class PlayerModel : Observable
             Native.pc_player_set_av_offset(_player, value / 1000);
             Raise();
         }
+    }
+
+    // ------------------------------------------------------------------ visualiser
+
+    /// Off by default. When on it takes over the stage for every file, including ones with
+    /// a video track (the video keeps decoding in sync but isn't drawn).
+    public bool VisualizerEnabled
+    {
+        get => _settings.visualizerEnabled;
+        set
+        {
+            if (_settings.visualizerEnabled == value) return;
+            _settings.visualizerEnabled = value;
+            _settings.Save();
+            Raise();
+            Raise(nameof(ShowsVisualizer));
+            SyncVideo();
+            UpdateKeepAwake();
+        }
+    }
+
+    public bool ShowsVisualizer => VisualizerEnabled && Current != null;
+
+    private bool _visLocked;
+    public bool VisLocked { get => _visLocked; set => Set(ref _visLocked, value); }
+
+    /// The stage tells the engine when the visualiser tap is needed.
+    public void SetVisualizerActive(bool active) => Native.pc_player_set_vis_enabled(_player, active ? 1 : 0);
+
+    public unsafe int VisSamples(float* lr, int frames) => Native.pc_player_vis_samples(_player, lr, frames);
+
+    /// Stop drawing video frames while the visualiser is up.
+    public void SyncVideo()
+    {
+        if (Renderer != null) Renderer.Enabled = !VisualizerEnabled;
     }
 
     private void SettingChanged([CallerMemberName] string? name = null)
@@ -448,6 +484,7 @@ public sealed class PlayerModel : Observable
 
     // SURROUND_DEBUG=<file>: status line every second (like the macOS app's stderr log)
     private static readonly string? DebugLog = Environment.GetEnvironmentVariable("SURROUND_DEBUG");
+    public Func<string>? VisDebug { get; set; }
     private int _debugTicks;
 
     private void Tick()
@@ -459,6 +496,7 @@ public sealed class PlayerModel : Observable
                 File.AppendAllText(DebugLog,
                     $"[app] items={Playlist.Count} {Title} pos={Position:F2}/{Duration:F1} playing={IsPlaying} mode={OutputMode} " +
                     $"| {OutputDescription} | video: {VideoDescription} presented={Renderer?.FramesPresented ?? 0} " +
+                    $"| {(ShowsVisualizer ? VisDebug?.Invoke() : "vis off")} " +
                     $"| err={ErrorMessage}\n");
             }
             catch { }
@@ -524,7 +562,7 @@ public sealed class PlayerModel : Observable
     private void UpdateKeepAwake()
     {
         // keep the display on while playing video (like the macOS app's activity)
-        Native.SetThreadExecutionState(IsPlaying && HasVideo
+        Native.SetThreadExecutionState(IsPlaying && (HasVideo || ShowsVisualizer)
             ? Native.ES_CONTINUOUS | Native.ES_DISPLAY_REQUIRED | Native.ES_SYSTEM_REQUIRED
             : Native.ES_CONTINUOUS);
     }

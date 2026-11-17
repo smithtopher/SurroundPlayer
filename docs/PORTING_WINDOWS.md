@@ -147,8 +147,10 @@ Implement `pc_video_backend.h`:
 
 ## Step 4 — app (WinUI 3, C#) — FIRST VERSION 2026-11-17
 
-`Windows/SurroundPlayer/`, built by `scripts\build_win.ps1 -App`. Everything below is in
-except the visualiser. Notes:
+`Windows/SurroundPlayer/`, built by `scripts\build_win.ps1 -App`. Everything below is in,
+including the visualiser (`Visualizer/`, `--vis-snapshot <dir>`). Notes:
+- Metal → HLSL: same uv/NDC conventions; D3D11 culls back faces by default, Metal doesn't,
+  so the visualiser uses a CullNone rasterizer state.
 - `dotnet build` needs `EnableMsixTooling` (no VS AppxPackage tasks in the CLI).
 - The renderer's device is created with `VideoSupport` and handed to the engine before
   any file opens; frames are drawn on the engine's presenter thread under a lock.

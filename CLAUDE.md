@@ -40,8 +40,13 @@ docs; this file is the context for continuing development.
     - Build: `scripts\build_win.ps1 -App`. Debug log: `SURROUND_DEBUG=<file>`.
     - Verified headless with silent media: H.264 D3D11VA at 24 fps presented, MPEG-4
       software/BGRA, AC3 passthrough + transcode, track advance, clean exit.
-    - **Not done on Windows:** the visualiser (Metal → HLSL port), cursor auto-hide only via
-      ShowCursor, HDR (PQ) tone mapping, playlist persistence (not on Mac either).
+    - **Visualiser ported** (`Windows/SurroundPlayer/Visualizer/`): HLSL shaders, the 13
+      presets, analyser (own radix-2 FFT scaled like vDSP), D3D11 renderer on its own device
+      and SwapChainPanel, driven by CompositionTarget.Rendering. `SurroundPlayer.exe
+      --vis-snapshot <dir>` writes a PNG per preset (verified: all 13 render like the Mac's).
+      Live: 60 fps from the engine's tap; video keeps decoding but isn't drawn.
+    - **Not done on Windows:** cursor auto-hide only via ShowCursor, HDR (PQ) tone mapping,
+      playlist persistence (not on Mac either).
     - Shortcuts: Mac ⌘ → Ctrl (Ctrl+←/→ prev/next, Ctrl+F search, Ctrl+O open, Ctrl+, settings).
   - **The Windows PC is connected the same way:** HDMI → Samsung TV → optical → AC3 amp.
     The user confirmed the testing rule below (silent files only) for it.

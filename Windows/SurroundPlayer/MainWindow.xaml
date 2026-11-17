@@ -43,6 +43,10 @@
                         <MenuFlyout x:Name="DeviceMenu" Placement="BottomEdgeAlignedRight" Opening="DeviceMenu_Opening" />
                     </DropDownButton.Flyout>
                 </DropDownButton>
+                <ToggleButton x:Name="VisToggle" Click="VisToggle_Click" IsTabStop="False"
+                              ToolTipService.ToolTip="Visualiser, also in place of video (V)">
+                    <FontIcon Glyph="&#xE9E9;" FontSize="14" />
+                </ToggleButton>
                 <Button Click="FullScreen_Click" IsTabStop="False" ToolTipService.ToolTip="Full screen player (F)">
                     <FontIcon Glyph="&#xE740;" FontSize="14" />
                 </Button>
@@ -84,6 +88,23 @@
                         <TextBlock x:Name="StageSubtitle" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
                                    Foreground="#B3FFFFFF" />
                     </StackPanel>
+                    <!-- visualiser (overrides the video track when enabled) + MilkDrop-style overlays -->
+                    <Grid x:Name="VisStage" Visibility="Collapsed">
+                        <SwapChainPanel x:Name="VisPanel" SizeChanged="VisPanel_SizeChanged"
+                                        CompositionScaleChanged="VisPanel_CompositionScaleChanged" />
+                        <Border x:Name="VisPresetPill" VerticalAlignment="Top" HorizontalAlignment="Right" Margin="20"
+                                Padding="10,5" CornerRadius="14" Background="#66000000" Opacity="0" IsHitTestVisible="False">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon x:Name="VisLockIcon" Glyph="&#xE72E;" FontSize="12" Foreground="White" Visibility="Collapsed" />
+                                <TextBlock x:Name="VisPresetText" Foreground="White" FontWeight="Medium" />
+                            </StackPanel>
+                        </Border>
+                        <StackPanel x:Name="VisTitle" VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="20"
+                                    Spacing="4" Opacity="0" IsHitTestVisible="False">
+                            <TextBlock x:Name="VisTitleText" FontSize="30" FontWeight="SemiBold" Foreground="White" />
+                            <TextBlock x:Name="VisSubtitleText" FontSize="18" Foreground="#CCFFFFFF" />
+                        </StackPanel>
+                    </Grid>
                     <Border x:Name="ErrorBanner" VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="16"
                             Padding="10" CornerRadius="8" Background="#D9C42B1C" Visibility="Collapsed">
                         <TextBlock x:Name="ErrorText" Foreground="White" TextWrapping="Wrap" MaxWidth="700" />

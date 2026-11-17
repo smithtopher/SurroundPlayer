@@ -33,6 +33,9 @@ public sealed partial class MainWindow : Window
     private bool _fullScreen, _controlsHidden, _cursorHidden, _updatingSlider, _scrubbing;
     private string[] _terms = Array.Empty<string>();
     private List<Track>? _filtered;
+    private Visualizer.VisualizerRenderer? _vis;
+    private bool _visAttached, _visRendering, _visFailed;
+    private readonly DispatcherQueueTimer _titleTimer, _presetTimer;
 
     public MainWindow(string[] files)
     {
@@ -70,16 +73,34 @@ public sealed partial class MainWindow : Window
         _hideTimer.IsRepeating = false;
         _hideTimer.Tick += (_, _) => HideControls();
 
+        // visualiser overlays fade (MilkDrop-style: title on track change, preset name on change)
+        VisTitle.OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(900) };
+        VisPresetPill.OpacityTransition = new ScalarTransition { Duration = TimeSpan.FromMilliseconds(400) };
+        _titleTimer = DispatcherQueue.CreateTimer();
+        _titleTimer.Interval = TimeSpan.FromSeconds(5);
+        _titleTimer.IsRepeating = false;
+        _titleTimer.Tick += (_, _) => VisTitle.Opacity = 0;
+        _presetTimer = DispatcherQueue.CreateTimer();
+        _presetTimer.Interval = TimeSpan.FromSeconds(2.5);
+        _presetTimer.IsRepeating = false;
+        _presetTimer.Tick += (_, _) => { if (!Model.VisLocked) VisPresetPill.Opacity = 0; };
+        VisToggle.IsChecked = Model.VisualizerEnabled;
+        Model.SyncVideo();
+        Model.VisDebug = () => _vis?.DebugStatus ?? "vis unavailable";
+
         Root.DragLeave += (_, _) => DropHighlight.Visibility = Visibility.Collapsed;
         Closed += (_, _) =>
         {
             SaveWindowSize();
             ShowCursor();
+            StopVisRendering();
             Model.Shutdown();
             _renderer?.Dispose();
+            _vis?.Dispose();
         };
 
         UpdateAll();
+        UpdateVisualizer();
         if (files.Length > 0) Model.Add(files, playFirst: true);
     }
 
@@ -132,6 +153,20 @@ public sealed partial class MainWindow : Window
             case nameof(PlayerModel.AudioTracks):
                 AudioTrackButton.Visibility = Model.AudioTracks.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
                 break;
+            case nameof(PlayerModel.VisualizerEnabled):
+                VisToggle.IsChecked = Model.VisualizerEnabled;
+                UpdateVisualizer();
+                break;
+            case nameof(PlayerModel.ShowsVisualizer): UpdateVisualizer(); break;
+            case nameof(PlayerModel.VisLocked):
+                if (_vis != null) _vis.Locked = Model.VisLocked;
+                VisLockIcon.Visibility = Model.VisLocked ? Visibility.Visible : Visibility.Collapsed;
+                FlashPreset();
+                break;
+            case nameof(PlayerModel.Title):
+                UpdateInfo();
+                FlashTitle();
+                break;
             default: UpdateInfo(); break;
         }
     }
@@ -156,7 +191,9 @@ public sealed partial class MainWindow : Window
         StageTitle.Foreground = new SolidColorBrush(playing ? Microsoft.UI.Colors.White : Windows.UI.Color.FromArgb(0x80, 255, 255, 255));
         StageSubtitle.Text = string.Join(" — ", new[] { Model.Artist, Model.Album }.Where(s => s.Length > 0));
         ArtGlyph.Glyph = playing ? "" : "";   // MusicNote / Speakers
-        NowPlaying.Visibility = Model.HasVideo ? Visibility.Collapsed : Visibility.Visible;
+        NowPlaying.Visibility = Model.HasVideo || (Model.ShowsVisualizer && _vis != null) ? Visibility.Collapsed : Visibility.Visible;
+        VisSubtitleText.Text = StageSubtitle.Text;
+        VisTitleText.Text = Model.Title;
 
         OutputBadge.Visibility = Model.OutputMode >= 0 ? Visibility.Visible : Visibility.Collapsed;
         bool bs = Model.IsBitstreaming;
@@ -214,6 +251,97 @@ public sealed partial class MainWindow : Window
         if (!double.IsFinite(t) || t <= 0) return "0:00";
         int s = (int)Math.Floor(t);
         return s >= 3600 ? $"{s / 3600}:{s / 60 % 60:00}:{s % 60:00}" : $"{s / 60}:{s % 60:00}";
+    }
+
+    // ------------------------------------------------------------------ visualiser
+
+    private void VisToggle_Click(object sender, RoutedEventArgs e) => Model.VisualizerEnabled = VisToggle.IsChecked == true;
+
+    /// Show/hide the visualiser stage; it renders on CompositionTarget.Rendering while shown.
+    private void UpdateVisualizer()
+    {
+        bool show = Model.ShowsVisualizer && EnsureVis();
+        VisStage.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (show)
+        {
+            TryAttachVis();
+            if (!_visRendering) { CompositionTarget.Rendering += OnRendering; _visRendering = true; }
+            Model.SetVisualizerActive(true);
+            FlashTitle();
+        }
+        else
+        {
+            StopVisRendering();
+            Model.SetVisualizerActive(false);
+        }
+        UpdateInfo();
+    }
+
+    private bool EnsureVis()
+    {
+        if (_vis != null) return true;
+        if (_visFailed) return false;
+        try
+        {
+            _vis = new Visualizer.VisualizerRenderer();
+            unsafe { _vis.FetchSamples = (buf, n) => Model.VisSamples(buf, n); }
+            _vis.Locked = Model.VisLocked;
+            _vis.PresetChanged += _ => FlashPreset();
+            VisPresetText.Text = _vis.PresetName;
+            return true;
+        }
+        catch (Exception e)
+        {
+            _visFailed = true;
+            Model.ErrorMessage = "Visualiser unavailable: " + e.Message;
+            return false;
+        }
+    }
+
+    private void TryAttachVis()
+    {
+        if (_vis == null || _visAttached || VisPanel.ActualWidth < 1 || VisPanel.ActualHeight < 1) return;
+        try { _vis.Attach(VisPanel); _visAttached = true; }
+        catch (Exception e) { Model.ErrorMessage = "Visualiser: " + e.Message; }
+    }
+
+    private void StopVisRendering()
+    {
+        if (!_visRendering) return;
+        CompositionTarget.Rendering -= OnRendering;
+        _visRendering = false;
+    }
+
+    private void OnRendering(object? sender, object e)
+    {
+        if (!_visAttached) { TryAttachVis(); return; }
+        _vis?.RenderToPanel();
+    }
+
+    private void VisPanel_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (!_visAttached) TryAttachVis();
+        else _vis?.Resize(VisPanel.ActualWidth, VisPanel.ActualHeight, VisPanel.CompositionScaleX, VisPanel.CompositionScaleY);
+    }
+
+    private void VisPanel_CompositionScaleChanged(SwapChainPanel sender, object args) =>
+        _vis?.Resize(VisPanel.ActualWidth, VisPanel.ActualHeight, VisPanel.CompositionScaleX, VisPanel.CompositionScaleY);
+
+    private void FlashTitle()
+    {
+        if (!Model.ShowsVisualizer || Model.Title.Length == 0) return;
+        VisTitle.Opacity = 1;
+        _titleTimer.Stop();
+        _titleTimer.Start();
+    }
+
+    private void FlashPreset()
+    {
+        if (_vis == null) return;
+        VisPresetText.Text = _vis.PresetName;
+        VisPresetPill.Opacity = 1;
+        _presetTimer.Stop();
+        _presetTimer.Start();
     }
 
     // ------------------------------------------------------------------ scrubbing
@@ -430,6 +558,10 @@ public sealed partial class MainWindow : Window
             case VirtualKey.Up when focused is not ListViewItem: Model.Skip(60); break;
             case VirtualKey.Down when focused is not ListViewItem: Model.Skip(-60); break;
             case VirtualKey.F: ToggleFullScreen(); break;
+            case VirtualKey.V: Model.VisualizerEnabled = !Model.VisualizerEnabled; break;
+            case (VirtualKey)221 or VirtualKey.N: _vis?.NextPreset(); break;       // ]
+            case (VirtualKey)219 or VirtualKey.P: _vis?.PreviousPreset(); break;   // [
+            case VirtualKey.L: Model.VisLocked = !Model.VisLocked; break;
             case VirtualKey.Escape when _fullScreen: ToggleFullScreen(); break;
             default: return;
         }
@@ -450,6 +582,8 @@ public sealed partial class MainWindow : Window
         ControlsBar.Margin = _fullScreen ? new Thickness(24) : new Thickness(0);
         ControlsBar.CornerRadius = _fullScreen ? new CornerRadius(14) : new CornerRadius(0);
         ControlsBar.MaxWidth = _fullScreen ? 900 : double.PositiveInfinity;
+        VisTitle.Margin = _fullScreen ? new Thickness(48, 48, 48, 160) : new Thickness(20);
+        VisPresetPill.Margin = _fullScreen ? new Thickness(48) : new Thickness(20);
         if (_fullScreen) PokeControls();
         else { _hideTimer.Stop(); ShowControls(); }
     }

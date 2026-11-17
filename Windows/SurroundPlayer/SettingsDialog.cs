@@ -56,6 +56,14 @@ public sealed class SettingsDialog : ContentDialog
             "mode, as Kodi does). The TV only has to forward it over optical to the amp. Stereo sources play as PCM unless " +
             "the option above is on; turn it on if your amp drops out when switching between PCM and surround."));
         panel.Children.Add(_dtsNote);
+        panel.Children.Add(Section("Visualiser"));
+        var vis = new ToggleSwitch { Header = "Show visualiser for music", IsOn = model.VisualizerEnabled };
+        vis.Toggled += (_, _) => _m.VisualizerEnabled = vis.IsOn;
+        panel.Children.Add(vis);
+        panel.Children.Add(Note(
+            "A MilkDrop-style feedback visualiser that reacts to the audio actually leaving the speakers. When on, it also " +
+            "replaces the picture of files with a video track. Keys: V toggle, ] / [ next / previous preset, L lock preset, " +
+            "F full screen."));
         panel.Children.Add(Section("Sync"));
         var lat = new Grid { ColumnSpacing = 8 };
         lat.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });

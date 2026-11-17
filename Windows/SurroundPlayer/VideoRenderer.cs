@@ -312,7 +312,7 @@ float4 ps_rgb(VSOut i) : SV_Target { return float4(texRGB.Sample(samp, i.uv).rgb
     // ISwapChainPanelNative::SetSwapChain (microsoft.ui.xaml.media.dxinterop.h)
     private static readonly Guid IID_ISwapChainPanelNative = new("63aad0b8-7c24-40ff-85a8-640d944cc325");
 
-    private static void SetPanelSwapChain(SwapChainPanel panel, IntPtr swapChain)
+    internal static void SetPanelSwapChain(SwapChainPanel panel, IntPtr swapChain)
     {
         IntPtr unk = WinRT.MarshalInspectable<object>.FromManaged(panel);
         try
