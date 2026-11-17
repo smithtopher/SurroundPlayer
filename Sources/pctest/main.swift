@@ -51,6 +51,7 @@ cfg.ac3_passthrough = flag("--no-passthrough") ? 0 : 1
 cfg.audio_track = Int32(value("--track") ?? "-1") ?? -1
 cfg.start_position = Double(value("--start") ?? "0") ?? 0
 
+if flag("--vis") { pc_player_set_vis_enabled(player, 1) }
 let dumpPath = args[1] == "dump" ? (args.count > 3 ? args[3] : "out.raw") : nil
 let uid = value("--device")
 var err = [CChar](repeating: 0, count: 512)
@@ -79,8 +80,15 @@ let limit = Double(value("--seconds") ?? "1e9") ?? 1e9
 let seekAt = value("--seek").flatMap(Double.init)
 let start = Date()
 var sought = false
+var visBuf = [Float](repeating: 0, count: 4096)
 while !ctx.eof && Date().timeIntervalSince(start) < limit {
-    usleep(250_000)
+    usleep(flag("--vis") ? 40_000 : 250_000)
+    if flag("--vis") {
+        let n = Int(pc_player_vis_samples(player, &visBuf, 2048))
+        var rms: Float = 0, zc = 0
+        for i in 0..<n { rms += visBuf[i * 2] * visBuf[i * 2]; if i > 0 && (visBuf[i * 2] < 0) != (visBuf[i * 2 - 2] < 0) { zc += 1 } }
+        print(String(format: "vis frames=%d rmsL=%.4f zcHz=%.0f pos=%.2f", n, n > 0 ? sqrt(rms / Float(n)) : 0, Double(zc) / 2 / (Double(max(n, 1)) / 48000), pc_player_position(player)))
+    }
     if let s = seekAt, !sought, Date().timeIntervalSince(start) > 2 { pc_player_seek(player, s); sought = true; print("seek -> \(s)") }
     if dumpPath == nil { print(String(format: "pos %.3f  frames %d", pc_player_position(player), ctx.frames)) }
     if flag("--debug") { pc_player_debug(player) }

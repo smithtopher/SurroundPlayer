@@ -211,6 +211,9 @@ static int fq_count(FrameQueue *f) {
 // player
 
 #define MAX_AUDIO_TRACKS 64
+#define TAP_FRAMES 131072            // ~2.7 s at 48 kHz, power of two
+#define TAP_MARKERS 128
+#define TAP_RATE 48000
 #define AC3_FRAME 1536
 
 struct PCPlayer {
@@ -277,6 +280,20 @@ struct PCPlayer {
     int video_hw;
 
     PCInfo info;
+
+    // visualiser tap: stereo float @ 48 kHz, timestamped, independent of the output path
+    _Atomic int vis_enabled;
+    pthread_mutex_t tap_lock;
+    float *tap;                      // TAP_FRAMES * 2, interleaved L/R
+    int64_t tap_w;                   // total frames written
+    int64_t tap_mpos[TAP_MARKERS];
+    double tap_mpts[TAP_MARKERS];
+    int tap_mhead, tap_mcount;
+    SwrContext *tap_swr;             // audio thread only
+    AVChannelLayout tap_in_layout;
+    int tap_in_rate, tap_in_fmt;
+    float *tap_tmp;
+    int tap_tmp_frames;
     uint8_t *art;
     int art_size;
 };
@@ -295,6 +312,8 @@ PCPlayer *pc_player_create(void) {
     av_log_set_level(AV_LOG_ERROR);
     PCPlayer *p = av_mallocz(sizeof(*p));
     pthread_mutex_init(&p->lock, NULL);
+    pthread_mutex_init(&p->tap_lock, NULL);
+    p->tap = av_calloc(TAP_FRAMES * 2, sizeof(float));
     p->astream = p->vstream = -1;
     return p;
 }
@@ -307,6 +326,8 @@ void pc_player_destroy(PCPlayer *p) {
     if (!p) return;
     pc_player_close(p);
     pthread_mutex_destroy(&p->lock);
+    pthread_mutex_destroy(&p->tap_lock);
+    av_free(p->tap);
     av_free(p);
 }
 
@@ -470,7 +491,101 @@ static void make_silence_burst(PCPlayer *p, const AVChannelLayout *layout, int k
 // ---------------------------------------------------------------------------
 // audio thread
 
+// ---------------------------------------------------------------------------
+// visualiser tap
+
+static void tap_reset(PCPlayer *p) {
+    swr_free(&p->tap_swr);
+    pthread_mutex_lock(&p->tap_lock);
+    p->tap_mcount = 0;
+    pthread_mutex_unlock(&p->tap_lock);
+}
+
+static void tap_feed(PCPlayer *p, const AVFrame *f, double pts) {
+    if (!atomic_load_explicit(&p->vis_enabled, memory_order_relaxed)) return;
+    AVChannelLayout in = { 0 };
+    if (f->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC || f->ch_layout.nb_channels == 0)
+        av_channel_layout_default(&in, f->ch_layout.nb_channels > 0 ? f->ch_layout.nb_channels : 2);
+    else
+        av_channel_layout_copy(&in, &f->ch_layout);
+    if (!p->tap_swr || p->tap_in_rate != f->sample_rate || p->tap_in_fmt != f->format ||
+        av_channel_layout_compare(&in, &p->tap_in_layout)) {
+        swr_free(&p->tap_swr);
+        AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+        if (swr_alloc_set_opts2(&p->tap_swr, &stereo, AV_SAMPLE_FMT_FLT, TAP_RATE, &in, f->format, f->sample_rate, 0, NULL) < 0 ||
+            swr_init(p->tap_swr) < 0) {
+            swr_free(&p->tap_swr);
+            av_channel_layout_uninit(&in);
+            return;
+        }
+        av_channel_layout_uninit(&p->tap_in_layout);
+        av_channel_layout_copy(&p->tap_in_layout, &in);
+        p->tap_in_rate = f->sample_rate;
+        p->tap_in_fmt = f->format;
+    }
+    av_channel_layout_uninit(&in);
+    int max_out = swr_get_out_samples(p->tap_swr, f->nb_samples);
+    if (max_out <= 0) return;
+    if (max_out > p->tap_tmp_frames) {
+        av_free(p->tap_tmp);
+        p->tap_tmp = av_malloc((size_t)max_out * 2 * sizeof(float));
+        p->tap_tmp_frames = p->tap_tmp ? max_out : 0;
+        if (!p->tap_tmp) return;
+    }
+    double first_pts = isnan(pts) ? NAN : pts - (double)swr_get_delay(p->tap_swr, TAP_RATE) / TAP_RATE;
+    uint8_t *out[1] = { (uint8_t *)p->tap_tmp };
+    int n = swr_convert(p->tap_swr, out, max_out, (const uint8_t **)f->extended_data, f->nb_samples);
+    if (n <= 0) return;
+    pthread_mutex_lock(&p->tap_lock);
+    if (!isnan(first_pts)) {
+        int i = (p->tap_mhead + p->tap_mcount) % TAP_MARKERS;
+        if (p->tap_mcount == TAP_MARKERS) { p->tap_mhead = (p->tap_mhead + 1) % TAP_MARKERS; p->tap_mcount--; }
+        p->tap_mpos[i] = p->tap_w;
+        p->tap_mpts[i] = first_pts;
+        p->tap_mcount++;
+    }
+    for (int k = 0; k < n; k++) {
+        int64_t idx = ((p->tap_w + k) & (TAP_FRAMES - 1)) * 2;
+        p->tap[idx] = p->tap_tmp[k * 2];
+        p->tap[idx + 1] = p->tap_tmp[k * 2 + 1];
+    }
+    p->tap_w += n;
+    pthread_mutex_unlock(&p->tap_lock);
+}
+
+void pc_player_set_vis_enabled(PCPlayer *p, int enabled) { atomic_store(&p->vis_enabled, enabled ? 1 : 0); }
+
+int pc_player_vis_samples(PCPlayer *p, float *lr, int frames) {
+    if (!p->is_open || p->astream < 0 || !p->out || frames <= 0 || frames > TAP_FRAMES / 2) return 0;
+    double clock = pc_out_clock(p->out);
+    if (isnan(clock)) return 0;
+    clock -= atomic_load(&p->av_offset);   // match the picture: what the amp is playing now
+    int got = 0;
+    pthread_mutex_lock(&p->tap_lock);
+    int best = -1;
+    for (int i = p->tap_mcount - 1; i >= 0; i--) {
+        int k = (p->tap_mhead + i) % TAP_MARKERS;
+        if (p->tap_mpts[k] <= clock) { best = k; break; }
+    }
+    if (best >= 0) {
+        int64_t end = p->tap_mpos[best] + (int64_t)((clock - p->tap_mpts[best]) * TAP_RATE);
+        if (end > p->tap_w) end = p->tap_w;
+        int64_t start = end - frames;
+        if (start >= 0 && start >= p->tap_w - TAP_FRAMES) {
+            for (int k = 0; k < frames; k++) {
+                int64_t idx = ((start + k) & (TAP_FRAMES - 1)) * 2;
+                lr[k * 2] = p->tap[idx];
+                lr[k * 2 + 1] = p->tap[idx + 1];
+            }
+            got = frames;
+        }
+    }
+    pthread_mutex_unlock(&p->tap_lock);
+    return got;
+}
+
 static void audio_reset(PCPlayer *p) {
+    tap_reset(p);
     if (p->adec) avcodec_flush_buffers(p->adec);
     swr_free(&p->swr);
     if (p->fifo) av_audio_fifo_reset(p->fifo);
@@ -560,6 +675,7 @@ static int audio_frame(PCPlayer *p, AVFrame *f, int serial) {
     double dur = f->sample_rate > 0 ? (double)f->nb_samples / f->sample_rate : 0;
     double target = atomic_load(&p->seek_target);
     if (!isnan(target) && !isnan(pts) && pts + dur < target) return 0;
+    tap_feed(p, f, pts);
     if (ensure_swr(p, f) < 0) return 0;
     int64_t delay = swr_get_delay(p->swr, p->out_rate);
     if (!isnan(pts)) {
@@ -630,7 +746,18 @@ static void *audio_thread(void *arg) {
         if (p->mode == PC_MODE_AC3_PASSTHROUGH) {
             double pts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts * av_q2d(st->time_base) - p->start_time : NAN;
             double target = atomic_load(&p->seek_target);
-            if (isnan(target) || isnan(pts) || pts + 0.032 >= target) spdif_send(p, pkt, pts, serial);
+            if (isnan(target) || isnan(pts) || pts + 0.032 >= target) {
+                // passthrough sends the packets untouched; decode a copy only to feed the visualiser
+                if (p->adec && atomic_load(&p->vis_enabled) && avcodec_send_packet(p->adec, pkt) >= 0) {
+                    while (avcodec_receive_frame(p->adec, frame) >= 0) {
+                        double fpts = frame->best_effort_timestamp != AV_NOPTS_VALUE
+                                          ? frame->best_effort_timestamp * av_q2d(st->time_base) - p->start_time : NAN;
+                        tap_feed(p, frame, fpts);
+                        av_frame_unref(frame);
+                    }
+                }
+                spdif_send(p, pkt, pts, serial);
+            }
         } else {
             int sr = avcodec_send_packet(p->adec, pkt);
             while (1) {
@@ -961,7 +1088,9 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
         else if (src_ch > 2 || cfg->stereo_as_ac3) mode = PC_MODE_AC3_TRANSCODE;
     }
 
-    if (mode != PC_MODE_AC3_PASSTHROUGH && open_decoder(st, &p->adec, NULL) < 0) {
+    if (mode == PC_MODE_AC3_PASSTHROUGH) {
+        open_decoder(st, &p->adec, NULL);   // optional: only feeds the visualiser
+    } else if (open_decoder(st, &p->adec, NULL) < 0) {
         snprintf(err, errlen, "No decoder for audio codec %s", avcodec_get_name(par->codec_id));
         return -1;
     }
@@ -971,7 +1100,7 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
     if (mode != PC_MODE_PCM) {
         p->out = take_output(p, 1, oerr, sizeof(oerr));
         if (!p->out) {
-            if (mode == PC_MODE_AC3_PASSTHROUGH && open_decoder(st, &p->adec, NULL) < 0) {
+            if (mode == PC_MODE_AC3_PASSTHROUGH && !p->adec) {
                 snprintf(err, errlen, "Bitstream output failed (%s) and no decoder available", oerr);
                 return -1;
             }
@@ -1191,6 +1320,13 @@ static void close_internal(PCPlayer *p, int keep_out) {
     avcodec_free_context(&p->aenc);
     av_buffer_unref(&p->hwdev);
     swr_free(&p->swr);
+    swr_free(&p->tap_swr);
+    av_channel_layout_uninit(&p->tap_in_layout);
+    av_freep(&p->tap_tmp);
+    p->tap_tmp_frames = 0;
+    pthread_mutex_lock(&p->tap_lock);
+    p->tap_mcount = 0;
+    pthread_mutex_unlock(&p->tap_lock);
     av_channel_layout_uninit(&p->swr_in_layout);
     av_channel_layout_uninit(&p->out_layout);
     if (p->cvt) { av_freep(&p->cvt[0]); av_freep(&p->cvt); }

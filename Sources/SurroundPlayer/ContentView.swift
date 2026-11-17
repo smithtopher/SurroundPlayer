@@ -5,28 +5,55 @@ struct ContentView: View {
     @EnvironmentObject var model: PlayerModel
     @State private var showPlaylist = true
     @State private var dropTargeted = false
+    @State private var controlsVisible = true
+    @State private var hideControls: DispatchWorkItem?
 
     var body: some View {
         HSplitView {
             VStack(spacing: 0) {
                 stage
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                ControlsBar()
+                    .overlay(alignment: .bottom) {
+                        if model.isFullScreen {
+                            ControlsBar()
+                                .clipShape(RoundedRectangle(cornerRadius: 14))
+                                .frame(maxWidth: 900)
+                                .padding(24)
+                                .opacity(controlsVisible ? 1 : 0)
+                                .onHover { inside in if inside { pokeControls(keep: true) } }
+                        }
+                    }
+                    .onContinuousHover { phase in
+                        if case .active = phase, model.isFullScreen { pokeControls() }
+                    }
+                if !model.isFullScreen { ControlsBar() }
             }
             .frame(minWidth: 520)
-            if showPlaylist {
+            if showPlaylist && !model.isFullScreen {
                 PlaylistView()
                     .frame(minWidth: 220, idealWidth: 280, maxWidth: 420)
             }
         }
+        .background(WindowAccessor { model.attach(window: $0) })
         .toolbar {
             ToolbarItemGroup {
                 Button { model.showOpenPanel() } label: { Label("Open", systemImage: "plus") }
                     .help("Add files or folders")
                 DevicePicker()
+                Button { model.visualizerEnabled.toggle() } label: {
+                    Label("Visualiser", systemImage: model.visualizerEnabled ? "sparkles.tv.fill" : "sparkles.tv")
+                }
+                .help(model.visualizerEnabled ? "Hide the visualiser (V)" : "Show the visualiser, also in place of video (V)")
+                Button { model.toggleFullScreen() } label: {
+                    Label("Full Screen", systemImage: "arrow.up.left.and.arrow.down.right")
+                }
+                .help("Full screen player (F)")
                 Button { showPlaylist.toggle() } label: { Label("Playlist", systemImage: "sidebar.right") }
                     .help("Show or hide the playlist")
             }
+        }
+        .onChange(of: model.isFullScreen) { _, full in
+            if full { pokeControls() } else { hideControls?.cancel(); controlsVisible = true }
         }
         .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
             loadDroppedURLs(providers) { urls in model.add(urls: urls, playFirst: !model.isPlaying) }
@@ -39,13 +66,30 @@ struct ContentView: View {
         }
     }
 
+    /// Full screen: show the controls on mouse movement, hide them (and the cursor) after 3 s.
+    private func pokeControls(keep: Bool = false) {
+        hideControls?.cancel()
+        if !controlsVisible { withAnimation(.easeOut(duration: 0.2)) { controlsVisible = true } }
+        guard !keep else { return }
+        let w = DispatchWorkItem {
+            guard model.isFullScreen else { return }
+            withAnimation(.easeIn(duration: 0.5)) { controlsVisible = false }
+            NSCursor.setHiddenUntilMouseMoves(true)
+        }
+        hideControls = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: w)
+    }
+
     @ViewBuilder private var stage: some View {
         ZStack {
             Color.black
-            if model.hasVideo {
+            if model.showsVisualizer, let r = model.visualizer {
+                VisualizerStage(renderer: r)        // overrides the video track when enabled
+            } else if model.hasVideo {
                 VideoView(sink: model.sink)
             } else {
                 NowPlayingArt()
+                    .onTapGesture(count: 2) { model.toggleFullScreen() }
             }
             if let err = model.errorMessage {
                 VStack {

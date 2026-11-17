@@ -37,9 +37,47 @@ Pick the TV in the toolbar's output menu (or Settings ⌘,). Drag files or whole
 onto the window or into the playlist (folders are scanned recursively), or use ⌘O.
 Type in the sidebar's filter field (⌘F) to search the playlist by file or folder name.
 All words must match, so `pink wall` finds Pink Floyd/The Wall tracks. Press Return to
-play the first match and Esc to clear. Shortcuts: Space play/pause, ←/→ ±10 s,
-↑/↓ ±1 min, ⌘←/⌘→ previous/next. Double-click the video to go full screen. Click the
-**DOLBY DIGITAL / PCM** badge to see exactly what is being sent.
+play the first match and Esc to clear. Click the **DOLBY DIGITAL / PCM** badge to see
+exactly what is being sent.
+
+Keys (in the player window, not while typing in the filter):
+
+| Key | |
+|---|---|
+| Space | play / pause |
+| ← → / ↑ ↓ | back/forward 10 s / 1 min |
+| ⌘← ⌘→ | previous / next track |
+| F (or double-click, or the toolbar button) | full-screen player; Esc leaves |
+| V | visualiser on/off |
+| ] / [ | next / previous visualiser preset |
+| L | lock the current preset |
+
+Full screen hides the toolbar and playlist. The transport controls float over the
+picture, and they and the cursor fade out after 3 s without mouse movement.
+
+### Visualiser
+
+When enabled (off by default: V, the toolbar ✨ button, the Visualiser menu or
+Settings), the stage shows a MilkDrop-2-style visualiser instead of the artwork. It also
+replaces the picture of files that have a video track. That video keeps decoding in sync
+but isn't drawn, so switching back is instant. It's built in Metal (in
+`Sources/SurroundPlayer/Visualizer/`):
+- **Feedback warp:** each frame re-draws the previous one through a per-pixel
+  zoom/rotate/warp/stretch field and fades it (`decay`).
+- **Drawn elements:** waveforms (circle, XY scope, lines, spectrum, dot spiral), custom
+  shapes and borders are drawn into that feedback.
+- **Composite:** a half-res blur adds glow, and a final pass adds kaleidoscope, video
+  echo, hue rotation, chromatic aberration and brighten/darken/solarize/invert.
+
+The 13 built-in presets react to relative bass/mid/treble levels and beats. Like MilkDrop,
+the player auto-advances on a strong beat (or after 40 s) and blends presets into each other.
+It's an original implementation, so it does not load `.milk` preset files.
+
+The audio comes from a tap in the engine, timed to what is leaving the speakers, so it
+also works while bitstreaming. Native Dolby Digital tracks are decoded a second time
+just for the visualiser. The visuals follow the Audio latency setting, like video.
+`SurroundPlayer --vis-snapshot <dir>` renders every preset to PNG with synthetic music
+(handy when writing presets).
 
 TV setup: set the TV's digital/optical audio output format to **Pass-through**
 (or Auto/Bitstream), not PCM.
@@ -77,7 +115,7 @@ Sources/PlayerCore/        C engine
   include/playercore.h     public API
   engine.c                 demux / decode / AC3 encode / IEC 61937 / video / A-V sync
   pc_output.c              CoreAudio HAL: hog mode, format switching, IOProc ring, clock
-Sources/SurroundPlayer/    SwiftUI app
+Sources/SurroundPlayer/    SwiftUI app (Visualizer/: Metal visualiser, presets, audio analysis)
 Sources/pctest/            CLI harness
 scripts/build_app.sh       arm64 / x86_64 / universal apps + zips
 scripts/build_ffmpeg.sh    static FFmpeg per architecture -> vendor/ffmpeg/<arch>

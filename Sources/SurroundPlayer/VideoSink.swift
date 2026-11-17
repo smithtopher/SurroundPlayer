@@ -8,6 +8,13 @@ import SwiftUI
 final class VideoSink: @unchecked Sendable {
     let layer = AVSampleBufferDisplayLayer()
     private var format: CMVideoFormatDescription?
+    private let enabledLock = NSLock()
+    private var _enabled = true
+    /// Frames arrive on the engine's presenter thread; while disabled they're dropped.
+    var isEnabled: Bool {
+        get { enabledLock.lock(); defer { enabledLock.unlock() }; return _enabled }
+        set { enabledLock.lock(); _enabled = newValue; enabledLock.unlock() }
+    }
 
     init() {
         layer.videoGravity = .resizeAspect
@@ -15,6 +22,7 @@ final class VideoSink: @unchecked Sendable {
     }
 
     func display(_ pb: CVPixelBuffer) {
+        guard isEnabled else { return }
         if format == nil || !CMVideoFormatDescriptionMatchesImageBuffer(format!, imageBuffer: pb) {
             format = nil
             CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: pb, formatDescriptionOut: &format)

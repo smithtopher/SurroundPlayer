@@ -44,6 +44,13 @@ struct SettingsView: View {
             } header: { Text("Surround") }
 
             Section {
+                Toggle("Show visualiser for music", isOn: $model.visualizerEnabled)
+                Text("A MilkDrop-style feedback visualiser that reacts to the audio actually leaving the speakers. When on, it also replaces the picture of files with a video track. Keys: V toggle, ] / [ next / previous preset, L lock preset, F full screen.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: { Text("Visualiser") }
+
+            Section {
                 HStack {
                     Slider(value: $model.avOffsetMs, in: -500...1000, step: 10) { Text("Audio latency") }
                     Text("\(Int(model.avOffsetMs)) ms").monospacedDigit().frame(width: 64, alignment: .trailing)

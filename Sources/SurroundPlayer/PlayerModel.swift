@@ -103,6 +103,108 @@ final class PlayerModel: ObservableObject {
         didSet { Self.defaults.set(avOffsetMs, forKey: "avOffsetMs"); pc_player_set_av_offset(player, avOffsetMs / 1000) }
     }
 
+    /// Off by default. When on it takes over the stage for every file, including ones
+    /// with a video track (the video keeps decoding in sync but isn't drawn).
+    @Published var visualizerEnabled: Bool = defaults.object(forKey: "visualizerEnabled") as? Bool ?? false {
+        didSet {
+            Self.defaults.set(visualizerEnabled, forKey: "visualizerEnabled")
+            syncVideoSink()
+            updateActivity()
+        }
+    }
+    @Published var visPresetName = ""
+    @Published var visPresetChanges = 0
+    @Published var visLocked = false { didSet { visualizer?.locked = visLocked } }
+    @Published var isFullScreen = false
+    private(set) weak var window: NSWindow?
+
+    /// Created lazily (needs Metal); owned here so the image/preset survive view changes.
+    lazy var visualizer: VisualizerRenderer? = {
+        guard let r = VisualizerRenderer() else { return nil }
+        let pl = player
+        r.fetchSamples = { buf, n in Int(pc_player_vis_samples(pl, buf, Int32(n))) }
+        r.onPresetChange = { [weak self] name in
+            self?.visPresetName = name
+            self?.visPresetChanges += 1
+        }
+        visPresetName = r.presetName
+        return r
+    }()
+
+    var showsVisualizer: Bool { visualizerEnabled && currentIndex != nil && visualizer != nil }
+
+    /// Stop pushing video frames to the (hidden) video layer while the visualiser is up.
+    private func syncVideoSink() {
+        let videoVisible = !(visualizerEnabled && visualizer != nil)
+        if videoVisible != sink.isEnabled {
+            sink.isEnabled = videoVisible
+            if videoVisible { sink.clear() }   // don't flash the frame from before the switch
+        }
+    }
+
+    func setVisualizerActive(_ active: Bool) { pc_player_set_vis_enabled(player, active ? 1 : 0) }
+
+    // MARK: window / full screen / keys
+
+    private var keyMonitor: Any?
+
+    func attach(window: NSWindow) {
+        guard self.window !== window else { return }
+        self.window = window
+        isFullScreen = window.styleMask.contains(.fullScreen)
+        let nc = NotificationCenter.default
+        // full screen = just the picture: no toolbar, no playlist, auto-hiding controls
+        nc.addObserver(forName: NSWindow.willEnterFullScreenNotification, object: window, queue: .main) { [weak window] _ in
+            MainActor.assumeIsolated {
+                PlayerModel.shared.isFullScreen = true
+                window?.toolbar?.isVisible = false
+            }
+        }
+        nc.addObserver(forName: NSWindow.willExitFullScreenNotification, object: window, queue: .main) { [weak window] _ in
+            MainActor.assumeIsolated {
+                PlayerModel.shared.isFullScreen = false
+                window?.toolbar?.isVisible = true
+            }
+        }
+        if keyMonitor == nil {
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                MainActor.assumeIsolated { PlayerModel.shared.handleKey(event) } ? nil : event
+            }
+        }
+    }
+
+    func toggleFullScreen() { (window ?? NSApp.keyWindow)?.toggleFullScreen(nil) }
+
+    /// Single-key controls for the player window. Skipped while typing in a text field,
+    /// and for key combos with ⌘/⌃/⌥ (those belong to the menus).
+    private func handleKey(_ event: NSEvent) -> Bool {
+        guard event.window === window, !(window?.firstResponder is NSText) else { return false }
+        let mods = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if mods == .command && event.keyCode == 123 { previous(); return true }   // ⌘←
+        if mods == .command && event.keyCode == 124 { next(); return true }       // ⌘→
+        if !mods.intersection([.command, .control, .option]).isEmpty { return false }
+        switch event.keyCode {
+        case 49: togglePlay(); return true                          // space
+        case 123: skip(-10); return true                            // ←
+        case 124: skip(10); return true                             // →
+        case 126: skip(60); return true                             // ↑
+        case 125: skip(-60); return true                            // ↓
+        case 53:                                                    // esc
+            if isFullScreen { toggleFullScreen(); return true }
+            return false
+        default: break
+        }
+        switch event.charactersIgnoringModifiers?.lowercased() {
+        case "f": toggleFullScreen()
+        case "v": visualizerEnabled.toggle()
+        case "]", "n": visualizer?.nextPreset()
+        case "[", "p": visualizer?.previousPreset()
+        case "l": visLocked.toggle()
+        default: return false
+        }
+        return true
+    }
+
     let sink = VideoSink()
     private let player: OpaquePointer
     private let bridge: EngineBridge
@@ -129,6 +231,7 @@ final class PlayerModel: ObservableObject {
         }, ctx)
         refreshDevices()
         watchDevices()
+        syncVideoSink()
         timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
@@ -367,7 +470,7 @@ final class PlayerModel: ObservableObject {
         if Self.debug {
             debugTicks += 1
             if debugTicks % 5 == 0 {
-                FileHandle.standardError.write("[app] items=\(playlist.count) \(title) pos=\(String(format: "%.2f", position))/\(String(format: "%.1f", duration)) playing=\(isPlaying) mode=\(outputMode) | \(outputDescription) | video: \(videoDescription)\n".data(using: .utf8)!)
+                FileHandle.standardError.write("[app] items=\(playlist.count) \(title) pos=\(String(format: "%.2f", position))/\(String(format: "%.1f", duration)) playing=\(isPlaying) mode=\(outputMode) | \(outputDescription) | video: \(videoDescription) | fullscreen=\(isFullScreen) \(showsVisualizer ? visualizer!.debugStatus : "vis off")\n".data(using: .utf8)!)
             }
         }
     }
@@ -411,7 +514,7 @@ final class PlayerModel: ObservableObject {
     }
 
     private func updateActivity() {
-        let wantAwake = isPlaying && hasVideo
+        let wantAwake = isPlaying && (hasVideo || showsVisualizer)
         if wantAwake, activity == nil {
             activity = ProcessInfo.processInfo.beginActivity(options: [.idleDisplaySleepDisabled, .userInitiated],
                                                              reason: "Video playback")

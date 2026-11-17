@@ -86,6 +86,12 @@ int pc_player_current_audio_track(PCPlayer *p);
 const uint8_t *pc_player_cover_art(PCPlayer *p, int *size);
 
 int pc_list_output_devices(PCDevice *out, int max);
+
+// Visualiser tap. When enabled, decoded audio is also kept as stereo float @ 48 kHz.
+// pc_player_vis_samples copies the `frames` L/R frames that are leaving the speakers
+// right now (interleaved, so lr must hold frames*2 floats). Returns frames, or 0.
+void pc_player_set_vis_enabled(PCPlayer *p, int enabled);
+int pc_player_vis_samples(PCPlayer *p, float *lr, int frames);
 void pc_player_debug(PCPlayer *p); // dumps internal state to stderr
 
 #ifdef __cplusplus
