@@ -10,12 +10,15 @@ public partial class App : Application
 
     public App()
     {
+        DebugTrace.Log($"app: start (pid {Environment.ProcessId})");
         InitializeComponent();
+        DebugTrace.Log("app: xaml resources loaded");
         Native.timeBeginPeriod(1);   // 1 ms sleep granularity for the engine's threads
     }
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
+        DebugTrace.Log("app: launched");
         var argv = Environment.GetCommandLineArgs().Skip(1).ToArray();
         // --vis-snapshot <dir>: render every visualiser preset to PNG with synthetic music, then quit
         int snap = Array.IndexOf(argv, "--vis-snapshot");

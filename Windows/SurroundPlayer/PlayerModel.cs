@@ -102,6 +102,7 @@ public sealed class PlayerModel : Observable
     public PlayerModel(DispatcherQueue ui)
     {
         _ui = ui;
+        DebugTrace.Log("model: create player");
         _player = Native.pc_player_create();
         _videoCb = (ctx, frame, pts) => Renderer?.Present(frame);
         _eventCb = (ctx, ev, msg) =>
@@ -109,10 +110,13 @@ public sealed class PlayerModel : Observable
             int gen = Volatile.Read(ref _generation);
             if (ev == Native.PC_EVENT_EOF) _ui.TryEnqueue(() => TrackFinished(gen));
         };
-        _deviceCb = ctx => _ui.TryEnqueue(RefreshDevices);
+        _deviceCb = ctx => { DebugTrace.Log("device change notification"); _ui.TryEnqueue(RefreshDevices); };
         Native.pc_player_set_callbacks(_player, _videoCb, _eventCb, IntPtr.Zero);
+        DebugTrace.Log("model: device callback");
         Native.pc_set_device_change_callback(_deviceCb, IntPtr.Zero);
+        DebugTrace.Log("model: list devices");
         RefreshDevices();
+        DebugTrace.Log("model: ready");
         _timer = ui.CreateTimer();
         _timer.Interval = TimeSpan.FromMilliseconds(200);
         _timer.Tick += (_, _) => Tick();
@@ -396,7 +400,9 @@ public sealed class PlayerModel : Observable
         cfg.device_uid = uidPtr;
         var err = new byte[512];
         int rc;
+        DebugTrace.Log($"play: open {track.Name}");
         fixed (byte* e = err) rc = Native.pc_player_open(_player, track.Path, ref cfg, paused ? 1 : 0, e, err.Length);
+        DebugTrace.Log($"play: opened rc={rc}");
         if (uidPtr != IntPtr.Zero) Marshal.FreeCoTaskMem(uidPtr);
         Current = track;
         if (rc != 0)

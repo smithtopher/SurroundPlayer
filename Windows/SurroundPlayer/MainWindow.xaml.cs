@@ -39,12 +39,15 @@ public sealed partial class MainWindow : Window
 
     public MainWindow(string[] files)
     {
+        DebugTrace.Log("window: xaml");
         InitializeComponent();
         var icon = Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico");
         if (File.Exists(icon)) AppWindow.SetIcon(icon);
 
+        DebugTrace.Log("window: model");
         Model = new PlayerModel(DispatcherQueue);
         PlaceWindow();
+        DebugTrace.Log("window: renderer");
         try
         {
             // decoded video lands on our device, so it must exist before the first file opens
@@ -56,7 +59,12 @@ public sealed partial class MainWindow : Window
         {
             Model.ErrorMessage = "Video output unavailable: " + e.Message;
         }
-        VideoPanel.Loaded += (_, _) => { try { _renderer?.Attach(VideoPanel); } catch (Exception e) { Model.ErrorMessage = "Video: " + e.Message; } };
+        VideoPanel.Loaded += (_, _) =>
+        {
+            DebugTrace.Log("panel loaded: attach");
+            try { _renderer?.Attach(VideoPanel); } catch (Exception e) { Model.ErrorMessage = "Video: " + e.Message; }
+            DebugTrace.Log("panel attached");
+        };
 
         Model.PropertyChanged += Model_PropertyChanged;
         Model.Playlist.CollectionChanged += (_, _) => RefreshPlaylistView();
@@ -101,6 +109,7 @@ public sealed partial class MainWindow : Window
 
         UpdateAll();
         UpdateVisualizer();
+        DebugTrace.Log("window: ready");
         if (files.Length > 0) Model.Add(files, playFirst: true);
     }
 
@@ -630,9 +639,17 @@ public sealed partial class MainWindow : Window
 
     // ------------------------------------------------------------------ video panel
 
-    private void VideoPanel_SizeChanged(object sender, SizeChangedEventArgs e) =>
+    private void VideoPanel_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        DebugTrace.Log($"panel resize {VideoPanel.ActualWidth:F0}x{VideoPanel.ActualHeight:F0}");
         _renderer?.Resize(VideoPanel.ActualWidth, VideoPanel.ActualHeight, VideoPanel.CompositionScaleX, VideoPanel.CompositionScaleY);
+        DebugTrace.Log("panel resized");
+    }
 
-    private void VideoPanel_CompositionScaleChanged(SwapChainPanel sender, object args) =>
+    private void VideoPanel_CompositionScaleChanged(SwapChainPanel sender, object args)
+    {
+        DebugTrace.Log($"panel scale {VideoPanel.CompositionScaleX}");
         _renderer?.Resize(VideoPanel.ActualWidth, VideoPanel.ActualHeight, VideoPanel.CompositionScaleX, VideoPanel.CompositionScaleY);
+        DebugTrace.Log("panel scaled");
+    }
 }

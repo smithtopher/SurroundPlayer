@@ -79,6 +79,10 @@ public sealed class SettingsDialog : ContentDialog
         lat.Children.Add(_latencyText);
         panel.Children.Add(lat);
         panel.Children.Add(Note("If sound arrives after the picture (the amp's decoding delay), raise this to delay the video by the same amount."));
+        var v = typeof(SettingsDialog).Assembly.GetName().Version;
+        var about = Note($"Surround Player {v?.ToString(3)}");
+        about.Margin = new Thickness(0, 12, 0, 0);
+        panel.Children.Add(about);
         Content = new ScrollViewer { Content = panel, MaxHeight = 640 };
 
         Load();

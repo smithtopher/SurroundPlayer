@@ -38,9 +38,19 @@ docs; this file is the context for continuing development.
       `VideoRenderer.cs` (SwapChainPanel; NV12/P010 slices → RGB shader, BGRA upload),
       `Settings.cs` (same keys as the Mac app, JSON in %LOCALAPPDATA%\SurroundPlayer).
     - Build: `scripts\build_win.ps1 -App`. Debug log: `SURROUND_DEBUG=<file>`.
-    - **Share:** `scripts\build_win.ps1 -Package` → `build\SurroundPlayer-<ver>-windows-x64.zip`
-      (self-contained: .NET + Windows App SDK + engine; no VC++ runtime imports; nothing to
-      install). Unsigned, so SmartScreen asks once (More info → Run anyway).
+    - **Share:** `scripts\build_win.ps1 -Package` → one file, `build\SurroundPlayer-<ver>-windows-x64.exe`
+      (~70 MB, single-file self-contained: .NET + Windows App SDK + engine; no VC++ runtime
+      imports; nothing to install). It unpacks to `%TEMP%\.net` on first start (~10 s; cached
+      starts ~1 s). It's unsigned, so SmartScreen asks once (More info → Run anyway).
+      **Bump `<Version>` in SurroundPlayer.csproj for each shared build** (shown in Settings).
+      - The single-file publish uses its own obj/bin (`build\windows\*-singlefile`). Sharing
+        them with the normal build made WinAppSDK reuse the wrong reg-free WinRT manifest,
+        causing "ClassFactory cannot supply requested class" at start.
+    - **Unresolved:** three start-up hangs (window not responding, no status), all within
+      minutes of a rebuild. The next 22 starts were fine. Suspected antivirus scanning
+      fresh binaries, not proven. `SURROUND_DEBUG` now logs `[trace …]` breadcrumbs
+      (app/XAML/window/model/renderer/open, UI vs presenter thread) to locate it if it recurs.
+      No debugger is installed (cdb/dotnet-dump unavailable).
     - Verified headless with silent media: H.264 D3D11VA at 24 fps presented, MPEG-4
       software/BGRA, AC3 passthrough + transcode, track advance, clean exit.
     - **Visualiser ported** (`Windows/SurroundPlayer/Visualizer/`): HLSL shaders, the 13

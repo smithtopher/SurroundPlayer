@@ -80,8 +80,10 @@ float4 ps_rgb(VSOut i) : SV_Target { return float4(texRGB.Sample(samp, i.uv).rgb
     /// Creates the swap chain and attaches it to the panel (UI thread).
     public void Attach(SwapChainPanel panel)
     {
+        DebugTrace.Log("renderer attach: waiting for lock");
         lock (_lock)
         {
+            DebugTrace.Log("renderer attach: locked");
             _width = Math.Max(1, (int)(panel.ActualWidth * panel.CompositionScaleX));
             _height = Math.Max(1, (int)(panel.ActualHeight * panel.CompositionScaleY));
             using var dxgiDevice = _device.QueryInterface<IDXGIDevice>();
@@ -108,8 +110,10 @@ float4 ps_rgb(VSOut i) : SV_Target { return float4(texRGB.Sample(samp, i.uv).rgb
 
     public void Resize(double width, double height, float scaleX, float scaleY)
     {
+        DebugTrace.Log("renderer resize: waiting for lock");
         lock (_lock)
         {
+            DebugTrace.Log("renderer resize: locked");
             if (_swap == null) return;
             int w = Math.Max(1, (int)(width * scaleX)), h = Math.Max(1, (int)(height * scaleY));
             if (w == _width && h == _height) { SetScale(scaleX, scaleY); return; }
@@ -132,23 +136,31 @@ float4 ps_rgb(VSOut i) : SV_Target { return float4(texRGB.Sample(samp, i.uv).rgb
     }
 
     /// Engine presenter thread: show this frame now.
+    private int _traced;
+
     public void Present(IntPtr frame)
     {
+        bool trace = DebugTrace.Enabled && _traced < 3;
+        if (trace) DebugTrace.Log($"present #{_traced}: waiting for lock");
         lock (_lock)
         {
+            if (trace) DebugTrace.Log($"present #{_traced}: locked, swap={(_swap != null)}");
             if (!_enabled || _swap == null) return;
             Native.pc_frame_retain(frame);
             ReleaseLast();
             _last = frame;
             Draw();
+            if (trace) DebugTrace.Log($"present #{_traced++}: drawn");
         }
     }
 
     /// Black screen (track change / stop); drops cached views of the old decoder's textures.
     public void Clear()
     {
+        DebugTrace.Log("renderer clear: waiting for lock");
         lock (_lock)
         {
+            DebugTrace.Log("renderer clear: locked");
             ReleaseLast();
             ClearViews();
             Draw();
