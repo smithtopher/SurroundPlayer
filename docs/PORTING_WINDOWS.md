@@ -145,7 +145,14 @@ Implement `pc_video_backend.h`:
 - `PCNativeFrame` is then that refcounted frame. The UI reads texture and index from
   it in the video callback (add a tiny accessor to the public API).
 
-## Step 4 — app (WinUI 3, C#)
+## Step 4 — app (WinUI 3, C#) — FIRST VERSION 2026-11-17
+
+`Windows/SurroundPlayer/`, built by `scripts\build_win.ps1 -App`. Everything below is in
+except the visualiser. Notes:
+- `dotnet build` needs `EnableMsixTooling` (no VS AppxPackage tasks in the CLI).
+- The renderer's device is created with `VideoSupport` and handed to the engine before
+  any file opens; frames are drawn on the engine's presenter thread under a lock.
+- Settings are JSON (`%LOCALAPPDATA%\SurroundPlayer\settings.json`), same keys as macOS.
 
 - **Engine:** build it as `playercore.dll` with `-DPC_BUILD_DLL`, and P/Invoke the
   functions in `playercore.h`. The callbacks are `[UnmanagedFunctionPointer]`

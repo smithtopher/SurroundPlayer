@@ -63,6 +63,17 @@ target_compile_definitions(playercore_win PUBLIC _CRT_SECURE_NO_WARNINGS _WIN32_
 target_compile_options(playercore_win PRIVATE ${PC_WARN})
 target_link_libraries(playercore_win PUBLIC ffmpeg ole32 avrt d3d11 dxgi)
 
+# playercore.dll for the WinUI app (P/Invoke). Same sources; PC_API exports the public API.
+add_library(playercore SHARED
+    "${PC_DIR}/engine.c"
+    "${PC_DIR}/pc_output.c"
+    "${PC_DIR}/platform/windows/audio_wasapi.c"
+    "${PC_DIR}/platform/windows/video_d3d11.c")
+target_include_directories(playercore PRIVATE "${PC_DIR}" "${PC_DIR}/include")
+target_compile_definitions(playercore PRIVATE PC_BUILD_DLL _CRT_SECURE_NO_WARNINGS _WIN32_WINNT=0x0A00)
+target_compile_options(playercore PRIVATE ${PC_WARN})
+target_link_libraries(playercore PRIVATE ffmpeg ole32 avrt d3d11 dxgi)
+
 # pctest: same driver as pcdump, on the real back-ends (devices / watch / play / dump)
 add_executable(pctest tools/pcdump.c)
 target_compile_options(pctest PRIVATE ${PC_WARN})

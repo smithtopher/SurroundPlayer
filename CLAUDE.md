@@ -30,7 +30,19 @@ docs; this file is the context for continuing development.
     device, before open), `pc_frame_info`, `pc_frame_retain/release`.
     **This PC's GPU is a GTX 970: no hardware HEVC**, so HEVC is decoded in software
     (1080p 10-bit keeps up). The P010 texture path is untested for that reason.
-    **Next: step 4, the WinUI 3 app.**
+  - **Step 4 (WinUI 3 app), first version 2026-11-17:** `Windows/SurroundPlayer/` (C#, .NET 8,
+    Windows App SDK 1.6 unpackaged + self-contained, Vortice for D3D11) on `playercore.dll`.
+    - Files: `Native.cs` (P/Invoke, struct layouts mirror playercore.h), `PlayerModel.cs`
+      (port of PlayerModel.swift incl. hot-plug reopen), `MainWindow.xaml(.cs)` (stage,
+      controls, playlist + search, device menu, badge, keys, full screen), `SettingsDialog.cs`,
+      `VideoRenderer.cs` (SwapChainPanel; NV12/P010 slices → RGB shader, BGRA upload),
+      `Settings.cs` (same keys as the Mac app, JSON in %LOCALAPPDATA%\SurroundPlayer).
+    - Build: `scripts\build_win.ps1 -App`. Debug log: `SURROUND_DEBUG=<file>`.
+    - Verified headless with silent media: H.264 D3D11VA at 24 fps presented, MPEG-4
+      software/BGRA, AC3 passthrough + transcode, track advance, clean exit.
+    - **Not done on Windows:** the visualiser (Metal → HLSL port), cursor auto-hide only via
+      ShowCursor, HDR (PQ) tone mapping, playlist persistence (not on Mac either).
+    - Shortcuts: Mac ⌘ → Ctrl (Ctrl+←/→ prev/next, Ctrl+F search, Ctrl+O open, Ctrl+, settings).
   - **The Windows PC is connected the same way:** HDMI → Samsung TV → optical → AC3 amp.
     The user confirmed the testing rule below (silent files only) for it.
   - **Windows build (no PATH setup needed):**
