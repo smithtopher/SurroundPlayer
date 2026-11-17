@@ -151,7 +151,9 @@ public sealed partial class MainWindow : Window
             case nameof(PlayerModel.IsScanning): UpdateCounts(); break;
             case nameof(PlayerModel.SelectedDevice): UpdateDeviceButton(); break;
             case nameof(PlayerModel.AudioTracks):
+            case nameof(PlayerModel.CurrentAudioTrack):
                 AudioTrackButton.Visibility = Model.AudioTracks.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+                AudioTrackLabel.Text = Model.CurrentAudioTrackLabel;
                 break;
             case nameof(PlayerModel.VisualizerEnabled):
                 VisToggle.IsChecked = Model.VisualizerEnabled;
@@ -197,7 +199,7 @@ public sealed partial class MainWindow : Window
 
         OutputBadge.Visibility = Model.OutputMode >= 0 ? Visibility.Visible : Visibility.Collapsed;
         bool bs = Model.IsBitstreaming;
-        OutputBadgeText.Text = bs ? (Model.BitstreamCodecName.Length == 0 ? "BITSTREAM" : Model.BitstreamCodecName.ToUpperInvariant()) : "PCM";
+        OutputBadgeText.Text = bs ? (Model.BitstreamCodecName.Length == 0 ? "BITSTREAM" : Model.BitstreamCodecName.ToUpperInvariant()) : Model.PcmBadge;
         OutputBadge.Background = bs ? (Brush)Application.Current.Resources["AccentFillColorDefaultBrush"]
                                     : (Brush)Application.Current.Resources["ControlFillColorSecondaryBrush"];
         OutputBadgeText.Foreground = bs ? (Brush)Application.Current.Resources["TextOnAccentFillColorPrimaryBrush"]
@@ -562,6 +564,7 @@ public sealed partial class MainWindow : Window
             case (VirtualKey)221 or VirtualKey.N: _vis?.NextPreset(); break;       // ]
             case (VirtualKey)219 or VirtualKey.P: _vis?.PreviousPreset(); break;   // [
             case VirtualKey.L: Model.VisLocked = !Model.VisLocked; break;
+            case VirtualKey.A: Model.CycleAudioTrack(); break;
             case VirtualKey.Escape when _fullScreen: ToggleFullScreen(); break;
             default: return;
         }

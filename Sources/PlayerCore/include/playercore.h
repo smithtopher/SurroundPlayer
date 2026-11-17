@@ -50,6 +50,9 @@ typedef struct {
     double start_position;      // seconds
     double av_offset;           // seconds; >0 delays video (compensates receiver decode latency)
     const char *dump_path;      // testing: write output stream to this file instead of a device
+    int multichannel_pcm;       // don't transcode: multichannel sources go out as decoded PCM in
+                                // their own layout and rate, exclusive and bit-exact (HDMI to an AVR).
+                                // Native AC3/DTS still pass through if `passthrough`; stereo stays shared PCM.
 } PCConfig;
 
 typedef struct {

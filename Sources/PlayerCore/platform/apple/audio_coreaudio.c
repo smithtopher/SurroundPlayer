@@ -260,6 +260,10 @@ static void restore_device(PCAudioDevice *d) {
 }
 
 PCAudioDevice *pcad_open(const char *uid, PCStreamType type, PCDeviceFormat *fmt, char *err, int errlen) {
+    if (type == PC_STREAM_PCM_EXCLUSIVE) {   // not implemented on macOS: the engine falls back to shared PCM
+        snprintf(err, errlen, "Exclusive multichannel PCM is not supported on macOS yet");
+        return NULL;
+    }
     int bitstream = type != PC_STREAM_PCM;   // the digital format carries AC3 and DTS alike
     PCAudioDevice *d = calloc(1, sizeof(*d));
     memset(fmt, 0, sizeof(*fmt));

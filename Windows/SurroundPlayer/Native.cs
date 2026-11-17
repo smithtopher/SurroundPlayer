@@ -29,6 +29,7 @@ internal static unsafe class Native
         public double start_position;
         public double av_offset;
         public IntPtr dump_path;
+        public int multichannel_pcm;
     }
 
     [StructLayout(LayoutKind.Sequential)]

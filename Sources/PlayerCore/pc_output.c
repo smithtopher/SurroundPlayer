@@ -84,6 +84,26 @@ static void emit_s16(PCOut *o, uint8_t *dst, const int16_t *src, int frames) {
     }
 }
 
+// PCM: the ring holds float; exclusive devices may want 16- or 32-bit integers.
+static void emit_float(PCOut *o, uint8_t *dst, const float *src, int frames) {
+    int n = frames * o->channels;
+    if (o->fmt.is_float) {
+        memcpy(dst, src, (size_t)n * 4);
+    } else if (o->fmt.bits == 16) {
+        int16_t *d = (int16_t *)dst;
+        for (int i = 0; i < n; i++) {
+            float v = src[i] * 32768.0f;
+            d[i] = (int16_t)(v >= 32767.0f ? 32767 : v <= -32768.0f ? -32768 : lrintf(v));
+        }
+    } else {
+        int32_t *d = (int32_t *)dst;
+        for (int i = 0; i < n; i++) {
+            double v = (double)src[i] * 2147483648.0;
+            d[i] = (int32_t)(v >= 2147483647.0 ? 2147483647 : v <= -2147483648.0 ? INT32_MIN : llrint(v));
+        }
+    }
+}
+
 static void emit_ring(PCOut *o, uint8_t *dst, int64_t pos, int frames) {
     int dbpf = o->fmt.channels * (o->fmt.bits / 8);
     while (frames > 0) {
@@ -91,7 +111,7 @@ static void emit_ring(PCOut *o, uint8_t *dst, int64_t pos, int frames) {
         int chunk = (int)((o->cap - off) / o->ring_bpf);
         if (chunk > frames) chunk = frames;
         if (o->bitstream) emit_s16(o, dst, (const int16_t *)(o->ring + off), chunk);
-        else memcpy(dst, o->ring + off, (size_t)chunk * o->ring_bpf);
+        else emit_float(o, dst, (const float *)(o->ring + off), chunk);
         dst += chunk * dbpf;
         pos += (int64_t)chunk * o->ring_bpf;
         frames -= chunk;
@@ -186,9 +206,10 @@ static void alloc_ring(PCOut *o, double seconds) {
     o->ring = calloc(1, (size_t)cap);
 }
 
-PCOut *pc_out_open(const char *device_uid, PCStreamType type, char *err, int errlen) {
+PCOut *pc_out_open(const char *device_uid, PCStreamType type, const PCDeviceFormat *req, char *err, int errlen) {
     PCOut *o = alloc_out();
-    o->bitstream = type != PC_STREAM_PCM;
+    o->bitstream = type == PC_STREAM_IEC61937_AC3 || type == PC_STREAM_IEC61937_DTS;
+    if (req) o->fmt = *req;     // PC_STREAM_PCM_EXCLUSIVE reads its request from here
     o->dev = pcad_open(device_uid, type, &o->fmt, err, errlen);
     if (!o->dev) { pc_out_close(o); return NULL; }
     if (o->bitstream) {
@@ -196,8 +217,10 @@ PCOut *pc_out_open(const char *device_uid, PCStreamType type, char *err, int err
         o->rate = 48000.0;
         o->ring_bpf = 4;            // the ring holds s16 stereo IEC 61937 frames
     } else {
-        if (!o->fmt.is_float || o->fmt.bits != 32) {
-            snprintf(err, errlen, "Device back-end returned a non-float PCM format");
+        int ok = o->fmt.is_float ? o->fmt.bits == 32
+                                 : type == PC_STREAM_PCM_EXCLUSIVE && (o->fmt.bits == 16 || o->fmt.bits == 32);
+        if (!ok || o->fmt.channels < 1) {
+            snprintf(err, errlen, "Device back-end returned an unsupported PCM format");
             pc_out_close(o);
             return NULL;
         }
@@ -211,11 +234,13 @@ PCOut *pc_out_open(const char *device_uid, PCStreamType type, char *err, int err
     return o;
 }
 
-PCOut *pc_out_open_file(const char *path, int bitstream, int pcm_channels, double pcm_rate, char *err, int errlen) {
+PCOut *pc_out_open_file(const char *path, int bitstream, int pcm_channels, double pcm_rate, uint32_t channel_mask,
+                         char *err, int errlen) {
     PCOut *o = alloc_out();
     o->file = fopen(path, "wb");
     if (!o->file) { snprintf(err, errlen, "Cannot open %s", path); pc_out_close(o); return NULL; }
     o->bitstream = bitstream;
+    o->fmt.channel_mask = bitstream ? 0 : channel_mask;
     o->channels = bitstream ? 2 : pcm_channels;
     o->rate = bitstream ? 48000.0 : pcm_rate;
     o->ring_bpf = bitstream ? 4 : pcm_channels * 4;
@@ -242,6 +267,7 @@ int pc_out_start(PCOut *o) {
 }
 
 double pc_out_rate(PCOut *o) { return o->rate; }
+uint32_t pc_out_channel_mask(PCOut *o) { return o->fmt.channel_mask; }
 int pc_out_channels(PCOut *o) { return o->channels; }
 double pc_out_bytes_per_sec(PCOut *o) { return o->bps; }
 const char *pc_out_description(PCOut *o) { return o->desc; }

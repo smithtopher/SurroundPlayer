@@ -196,6 +196,7 @@ public sealed class PlayerModel : Observable
     public int DtsBitrate { get => _settings.dtsBitrate; set { if (_settings.dtsBitrate != value) { _settings.dtsBitrate = value; SettingChanged(); } } }
     public bool Ac3Passthrough { get => _settings.ac3Passthrough; set { if (_settings.ac3Passthrough != value) { _settings.ac3Passthrough = value; SettingChanged(); } } }
     public bool StereoAsAC3 { get => _settings.stereoAsAC3; set { if (_settings.stereoAsAC3 != value) { _settings.stereoAsAC3 = value; SettingChanged(); } } }
+    public bool MultichannelPcm { get => _settings.multichannelPcm; set { if (_settings.multichannelPcm != value) { _settings.multichannelPcm = value; SettingChanged(); } } }
     public double AvOffsetMs
     {
         get => _settings.avOffsetMs;
@@ -377,8 +378,11 @@ public sealed class PlayerModel : Observable
 
         var cfg = new Native.PCConfig
         {
-            bitstream_enabled = Ac3Enabled ? 1 : 0,
-            bitstream_codec = BitstreamCodec == 1 ? Native.PC_CODEC_DTS : Native.PC_CODEC_AC3,
+            // multichannel PCM transcodes nothing; bitstream is then only for native passthrough
+            bitstream_enabled = MultichannelPcm ? (Ac3Passthrough ? 1 : 0) : Ac3Enabled ? 1 : 0,
+            // multichannel PCM: nothing is transcoded, so let native AC3 and DTS both pass through
+            bitstream_codec = BitstreamCodec == 1 || MultichannelPcm ? Native.PC_CODEC_DTS : Native.PC_CODEC_AC3,
+            multichannel_pcm = MultichannelPcm ? 1 : 0,
             dts_bitrate_kbps = DtsBitrate,
             ac3_bitrate_kbps = Ac3Bitrate,
             passthrough = Ac3Passthrough ? 1 : 0,
@@ -465,6 +469,35 @@ public sealed class PlayerModel : Observable
     {
         if (!_isOpen || Current == null || index == CurrentAudioTrack) return;
         Play(Current, Position, !IsPlaying, index);
+    }
+
+    /// A key: next audio track (wraps).
+    public void CycleAudioTrack()
+    {
+        if (AudioTracks.Count > 1) SelectAudioTrack((CurrentAudioTrack + 1) % AudioTracks.Count);
+    }
+
+    /// Current track without its "N: " prefix, for the controls bar.
+    public string CurrentAudioTrackLabel
+    {
+        get
+        {
+            if (CurrentAudioTrack < 0 || CurrentAudioTrack >= AudioTracks.Count) return "";
+            var s = AudioTracks[CurrentAudioTrack];
+            int c = s.IndexOf(": ", StringComparison.Ordinal);
+            return c > 0 && c < 4 ? s[(c + 2)..] : s;
+        }
+    }
+
+    /// Badge text when not bitstreaming: "PCM", or "PCM 5.1" for untranscoded multichannel.
+    public string PcmBadge
+    {
+        get
+        {
+            if (!OutputDescription.Contains("multichannel", StringComparison.Ordinal)) return "PCM";
+            var parts = OutputDescription.Split(' ');
+            return parts.Length > 1 ? "PCM " + parts[1].Split('(')[0] : "PCM";
+        }
     }
 
     public void Shutdown()

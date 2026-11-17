@@ -12,8 +12,12 @@ public sealed class SettingsDialog : ContentDialog
     private readonly PlayerModel _m;
     private readonly ComboBox _device = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly TextBlock _deviceNote = Note("");
-    private readonly ToggleSwitch _bitstream = new() { Header = "Bitstream surround (Dolby Digital / DTS)" };
-    private readonly ComboBox _codec = new() { Header = "Transcode surround to", HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly ComboBox _codec = new() { Header = "Surround output", HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly TextBlock _mcNote = Note(
+        "Multichannel PCM: surround is decoded and sent as uncompressed PCM in its own channel layout and sample rate " +
+        "(up to 7.1, 24-bit/192 kHz), with exclusive access, bit-for-bit, nothing re-encoded. Needs HDMI straight into " +
+        "an AV receiver (or a TV that passes it on over HDMI eARC): optical/S/PDIF can't carry it, so a TV feeding an " +
+        "amp over optical downmixes it to stereo. If the device refuses the layout, the player falls back to stereo PCM.");
     private readonly ComboBox _ac3Rate = new() { Header = "Dolby Digital bitrate", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly ComboBox _dtsRate = new() { Header = "DTS bitrate", HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly CheckBox _passthrough = new();
@@ -34,8 +38,10 @@ public sealed class SettingsDialog : ContentDialog
         CloseButtonText = "Done";
         DefaultButton = ContentDialogButton.Close;
 
-        _codec.Items.Add("Dolby Digital (AC3)");
-        _codec.Items.Add("DTS");
+        _codec.Items.Add("Dolby Digital bitstream (AC3, transcoded)");
+        _codec.Items.Add("DTS bitstream (transcoded)");
+        _codec.Items.Add("Multichannel PCM (no transcoding, HDMI to an AV receiver)");
+        _codec.Items.Add("Off (stereo PCM)");
         foreach (var s in new[] { "384 kb/s", "448 kb/s (DVD)", "640 kb/s (Blu-ray, best)" }) _ac3Rate.Items.Add(s);
         foreach (var s in new[] { "1509 kb/s (full rate, best)", "754 kb/s (half rate)" }) _dtsRate.Items.Add(s);
 
@@ -44,8 +50,8 @@ public sealed class SettingsDialog : ContentDialog
         panel.Children.Add(_device);
         panel.Children.Add(_deviceNote);
         panel.Children.Add(Section("Surround"));
-        panel.Children.Add(_bitstream);
         panel.Children.Add(_codec);
+        panel.Children.Add(_mcNote);
         panel.Children.Add(_ac3Rate);
         panel.Children.Add(_dtsRate);
         panel.Children.Add(_passthrough);
@@ -82,8 +88,26 @@ public sealed class SettingsDialog : ContentDialog
             _m.DeviceUID = _device.SelectedIndex == 0 ? "" : _m.Devices[_device.SelectedIndex - 1].Uid;
             Load();
         };
-        _bitstream.Toggled += (_, _) => { if (!_loading) { _m.Ac3Enabled = _bitstream.IsOn; Load(); } };
-        _codec.SelectionChanged += (_, _) => { if (!_loading) { _m.BitstreamCodec = _codec.SelectedIndex; Load(); } };
+        _codec.SelectionChanged += (_, _) =>
+        {
+            if (_loading || _codec.SelectedIndex < 0) return;
+            switch (_codec.SelectedIndex)
+            {
+                case 0 or 1:
+                    _m.MultichannelPcm = false;
+                    _m.Ac3Enabled = true;
+                    _m.BitstreamCodec = _codec.SelectedIndex;
+                    break;
+                case 2:
+                    _m.MultichannelPcm = true;
+                    break;
+                default:
+                    _m.MultichannelPcm = false;
+                    _m.Ac3Enabled = false;
+                    break;
+            }
+            Load();
+        };
         _ac3Rate.SelectionChanged += (_, _) => { if (!_loading) _m.Ac3Bitrate = new[] { 384, 448, 640 }[_ac3Rate.SelectedIndex]; };
         _dtsRate.SelectionChanged += (_, _) => { if (!_loading) _m.DtsBitrate = _dtsRate.SelectedIndex == 1 ? 754 : 1509; };
         _passthrough.Click += (_, _) => _m.Ac3Passthrough = _passthrough.IsChecked == true;
@@ -107,19 +131,21 @@ public sealed class SettingsDialog : ContentDialog
         _deviceNote.Text = dev == null ? "" : dev.CanBitstream
             ? $"{dev.Name} is a digital output: Dolby Digital / DTS bitstreaming is available."
             : $"{dev.Name} is not a digital output, so PCM is always used (bitstream would play as noise).";
-        _bitstream.IsOn = _m.Ac3Enabled;
-        _codec.SelectedIndex = _m.BitstreamCodec == 1 ? 1 : 0;
+        bool mc = _m.MultichannelPcm, off = !mc && !_m.Ac3Enabled;
+        _codec.SelectedIndex = mc ? 2 : off ? 3 : _m.BitstreamCodec == 1 ? 1 : 0;
         _ac3Rate.SelectedIndex = _m.Ac3Bitrate switch { 384 => 0, 448 => 1, _ => 2 };
         _dtsRate.SelectedIndex = _m.DtsBitrate < 1000 ? 1 : 0;
-        bool dts = _m.BitstreamCodec == 1;
-        _ac3Rate.Visibility = dts ? Visibility.Collapsed : Visibility.Visible;
+        bool dts = !mc && !off && _m.BitstreamCodec == 1, ac3 = !mc && !off && !dts;
+        _mcNote.Visibility = mc ? Visibility.Visible : Visibility.Collapsed;
+        _ac3Rate.Visibility = ac3 ? Visibility.Visible : Visibility.Collapsed;
         _dtsRate.Visibility = dts ? Visibility.Visible : Visibility.Collapsed;
         _dtsNote.Visibility = dts ? Visibility.Visible : Visibility.Collapsed;
-        _passthrough.Content = dts ? "Pass native Dolby Digital and DTS tracks through untouched"
-                                   : "Pass native Dolby Digital tracks through untouched";
+        _stereo.Visibility = mc || off ? Visibility.Collapsed : Visibility.Visible;
+        _passthrough.Visibility = off ? Visibility.Collapsed : Visibility.Visible;
+        _passthrough.Content = ac3 ? "Pass native Dolby Digital tracks through untouched"
+                                   : "Pass native Dolby Digital and DTS tracks through untouched";
         _passthrough.IsChecked = _m.Ac3Passthrough;
         _stereo.IsChecked = _m.StereoAsAC3;
-        foreach (var c in new Control[] { _codec, _ac3Rate, _dtsRate, _passthrough, _stereo }) c.IsEnabled = _m.Ac3Enabled;
         _latency.Value = _m.AvOffsetMs;
         _latencyText.Text = $"{(int)_m.AvOffsetMs} ms";
         _loading = false;

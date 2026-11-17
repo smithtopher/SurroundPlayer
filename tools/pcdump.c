@@ -1,9 +1,12 @@
 // Plain-C engine driver (no Swift, no OS media APIs when built with the stub
 // back-ends). Built twice on Windows: pcdump.exe (stub back-ends, what regress.sh uses)
 // and pctest.exe (real audio back-end).
-//   pcdump <media> <out> [--pcm] [--dts] [--stereo]       write the output stream to a file
+//   pcdump <media> <out> [--pcm] [--dts] [--stereo] [--mc-pcm] [--track N]
+//                                                          write the output stream to a file
 //   pcdump devices                                         list output devices
-//   pcdump play <media> [--device UID] [--pcm] [--dts] [--stereo] [--seconds N] [--debug]
+//   pcdump play <media> [--device UID] [--pcm] [--dts] [--stereo] [--mc-pcm] [--track N] [--seconds N] [--debug]
+//   --mc-pcm: multichannel sources as untranscoded PCM (dump: f32le in the source's channels/rate)
+//   --track N: audio track index (0-based)
 //                                                          headless playback to a device
 // First thing to get running on a new OS; see scripts/check_portable.sh.
 // TESTING RULE: only play SILENT media to real devices (ffmpeg -f lavfi -i anullsrc ...).
@@ -85,10 +88,10 @@ int main(int argc, char **argv) {
         return watch_devices(argc >= 4 && !strcmp(argv[2], "--seconds") ? atof(argv[3]) : 0);
     int play = argc >= 2 && !strcmp(argv[1], "play");
     if (argc < 3) {
-        fprintf(stderr, "usage: pcdump <media> <out> [--pcm] [--dts] [--stereo]\n"
+        fprintf(stderr, "usage: pcdump <media> <out> [--pcm] [--dts] [--stereo] [--mc-pcm] [--track N]\n"
                         "       pcdump devices\n"
                         "       pcdump watch [--seconds N]\n"
-                        "       pcdump play <media> [--device UID] [--pcm] [--dts] [--stereo] [--seconds N] [--debug]\n"
+                        "       pcdump play <media> [--device UID] [--pcm] [--dts] [--stereo] [--mc-pcm] [--track N] [--seconds N] [--debug]\n"
                         "         (play reopens at the same position when the output is lost)\n");
         return 1;
     }
@@ -109,6 +112,8 @@ int main(int argc, char **argv) {
         if (!strcmp(argv[i], "--pcm")) cfg.bitstream_enabled = 0;
         else if (!strcmp(argv[i], "--dts")) cfg.bitstream_codec = PC_CODEC_DTS;
         else if (!strcmp(argv[i], "--stereo")) cfg.stereo_bitstream = 1;
+        else if (!strcmp(argv[i], "--mc-pcm")) cfg.multichannel_pcm = 1;
+        else if (!strcmp(argv[i], "--track") && i + 1 < argc) cfg.audio_track = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--debug")) debug = 1;
         else if (!strcmp(argv[i], "--device") && i + 1 < argc) cfg.device_uid = argv[++i];
         else if (!strcmp(argv[i], "--seconds") && i + 1 < argc) seconds = atof(argv[++i]);
@@ -121,6 +126,12 @@ int main(int argc, char **argv) {
     PCInfo info;
     pc_player_get_info(p, &info);
     printf("source: %s\noutput: %s\n", info.source_audio, info.output);
+    int ntracks = pc_player_audio_track_count(p);
+    for (int i = 0; ntracks > 1 && i < ntracks; i++) {
+        char name[256];
+        pc_player_audio_track_name(p, i, name, sizeof(name));
+        printf("track %s%s\n", name, i == pc_player_current_audio_track(p) ? "  (playing)" : "");
+    }
     if (play) pc_set_device_change_callback(on_devices_changed, NULL);
     int64_t start = pc_now_ns(), next_report = start + 1000000000LL;
     int is_open = 1;

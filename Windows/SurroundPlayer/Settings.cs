@@ -16,6 +16,7 @@ public sealed class Settings
     public int dtsBitrate { get; set; } = 1509;
     public bool ac3Passthrough { get; set; } = true;
     public bool stereoAsAC3 { get; set; } = false;
+    public bool multichannelPcm { get; set; } = false;    // don't transcode: multichannel PCM (HDMI to an AVR)
     public double avOffsetMs { get; set; } = 0;
     public bool visualizerEnabled { get; set; } = false;
     // Windows only: last window size in DIPs (0 = default 1280x800)

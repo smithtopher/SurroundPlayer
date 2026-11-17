@@ -35,6 +35,7 @@ static const IID pc_IID_IAudioClock = {0xCD63314F, 0x3FBA, 0x4A1B, {0x81, 0x2C, 
 static const IID pc_IID_IUnknown = {0x00000000, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
 static const IID pc_IID_IMMNotificationClient = {0x7991EEC9, 0x7E89, 0x4D85, {0x83, 0x90, 0x6C, 0x70, 0x3C, 0xEC, 0x60, 0xC0}};
 #define PC_KSGUID(tag) {tag, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71}}
+static const GUID pc_SUBTYPE_PCM = PC_KSGUID(0x00000001);
 static const GUID pc_SUBTYPE_IEEE_FLOAT = PC_KSGUID(0x00000003);
 static const GUID pc_SUBTYPE_IEC61937_DTS = PC_KSGUID(0x00000008);
 static const GUID pc_SUBTYPE_IEC61937_DOLBY_DIGITAL = PC_KSGUID(0x00000092);
@@ -399,8 +400,48 @@ static HRESULT init_exclusive(PCAudioDevice *d, const WAVEFORMATEX *f) {
     return hr;
 }
 
+// 5.1/5.0 side <-> back: drivers often accept only one of the two for the same 6 channels
+static uint32_t alt_surround_mask(uint32_t m) {
+    const uint32_t side = SPEAKER_SIDE_LEFT | SPEAKER_SIDE_RIGHT, back = SPEAKER_BACK_LEFT | SPEAKER_BACK_RIGHT;
+    if ((m & side) == side && !(m & back)) return (m & ~side) | back;
+    if ((m & back) == back && !(m & side)) return (m & ~back) | side;
+    return 0;
+}
+
+// Exclusive multichannel PCM: first format the endpoint accepts, trying the source rate
+// then 48 kHz, the source speaker mask then its side/back twin, and 24-in-32, 32, 16-bit
+// integer, then float.
+static int find_pcm_format(IAudioClient *c, int channels, int rate, uint32_t mask, WAVEFORMATEXTENSIBLE *out) {
+    int rates[2] = { rate, 48000 };
+    uint32_t masks[2] = { mask, alt_surround_mask(mask) };
+    static const struct { int bits, valid, is_float; } sf[] = { { 32, 24, 0 }, { 32, 32, 0 }, { 16, 16, 0 }, { 32, 32, 1 } };
+    for (int ri = 0; ri < 2; ri++) {
+        if (ri == 1 && rates[1] == rates[0]) break;
+        for (int mi = 0; mi < 2; mi++) {
+            if (mi == 1 && !masks[1]) break;
+            for (int s = 0; s < 4; s++) {
+                WAVEFORMATEXTENSIBLE *w = out;
+                memset(w, 0, sizeof(*w));
+                w->Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+                w->Format.nChannels = (WORD)channels;
+                w->Format.nSamplesPerSec = (DWORD)rates[ri];
+                w->Format.wBitsPerSample = (WORD)sf[s].bits;
+                w->Format.nBlockAlign = (WORD)(channels * sf[s].bits / 8);
+                w->Format.nAvgBytesPerSec = w->Format.nSamplesPerSec * w->Format.nBlockAlign;
+                w->Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
+                w->Samples.wValidBitsPerSample = (WORD)sf[s].valid;
+                w->dwChannelMask = masks[mi];
+                w->SubFormat = sf[s].is_float ? pc_SUBTYPE_IEEE_FLOAT : pc_SUBTYPE_PCM;
+                if (IAudioClient_IsFormatSupported(c, AUDCLNT_SHAREMODE_EXCLUSIVE, &w->Format, NULL) == S_OK) return 0;
+            }
+        }
+    }
+    return -1;
+}
+
 PCAudioDevice *pcad_open(const char *uid, PCStreamType type, PCDeviceFormat *fmt, char *err, int errlen) {
-    int bitstream = type != PC_STREAM_PCM;
+    int bitstream = type == PC_STREAM_IEC61937_AC3 || type == PC_STREAM_IEC61937_DTS;
+    PCDeviceFormat req = *fmt;   // PC_STREAM_PCM_EXCLUSIVE: the wanted channels / rate / mask
     memset(fmt, 0, sizeof(*fmt));
     PCAudioDevice *d = calloc(1, sizeof(*d));
     char name[256] = "?";
@@ -441,6 +482,25 @@ PCAudioDevice *pcad_open(const char *uid, PCStreamType type, PCDeviceFormat *fmt
         fmt->rate = 48000.0;
         snprintf(fmt->description, sizeof(fmt->description), "%s (%s), exclusive, %s 2ch 16-bit 48 kHz",
                  name, form_factor_name(ff), sub);
+    } else if (type == PC_STREAM_PCM_EXCLUSIVE) {
+        WAVEFORMATEXTENSIBLE w;
+        if (req.channels < 1 || req.channels > 8 ||
+            find_pcm_format(d->client, req.channels, (int)req.rate, req.channel_mask, &w) != 0) {
+            snprintf(err, errlen, "'%s' doesn't accept %d-channel PCM in exclusive mode (the TV/receiver advertises fewer channels)",
+                     name, req.channels);
+            goto fail;
+        }
+        d->exclusive = 1;
+        hr = init_exclusive(d, &w.Format);
+        if (FAILED(hr)) { set_hr_err(err, errlen, "Exclusive multichannel PCM output", name, hr); goto fail; }
+        fmt->channels = w.Format.nChannels;
+        fmt->bits = w.Format.wBitsPerSample;
+        fmt->is_float = IsEqualGUID(&w.SubFormat, &pc_SUBTYPE_IEEE_FLOAT);
+        fmt->rate = w.Format.nSamplesPerSec;
+        fmt->channel_mask = w.dwChannelMask;
+        snprintf(fmt->description, sizeof(fmt->description), "%s (%s), exclusive, %d ch %s %d-bit%s %.0f Hz", name,
+                 form_factor_name(ff), fmt->channels, fmt->is_float ? "float" : "int", w.Samples.wValidBitsPerSample,
+                 fmt->bits == 32 && w.Samples.wValidBitsPerSample == 24 ? " (in 32)" : "", fmt->rate);
     } else {
         WAVEFORMATEX *mix = NULL;
         hr = IAudioClient_GetMixFormat(d->client, &mix);

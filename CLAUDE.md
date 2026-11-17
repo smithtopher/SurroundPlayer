@@ -159,6 +159,16 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
   - DTS mode: passes AC3 and DTS core through (DTS-HD → core, but DTS Express is
     transcoded); everything else is transcoded to DTS.
 - **Stereo** goes out as PCM unless `stereo_bitstream` is set.
+- **Multichannel PCM** (`PCConfig.multichannel_pcm`, added 2026-11-17): nothing is transcoded.
+  Multichannel sources go out as decoded PCM in their own layout and rate via
+  `PC_STREAM_PCM_EXCLUSIVE`: WASAPI exclusive, first accepted of source rate / 48 kHz ×
+  source mask / side↔back twin × s24-in-32 / s32 / s16 / float. Bit-exact for ≤24-bit,
+  verified with a 24/96 dump. Native AC3/DTS still pass through; stereo stays shared PCM.
+  On refusal it falls back to shared PCM. CoreAudio refuses it for now, and the Mac UI
+  doesn't expose it. The Samsung accepts 6 ch 24/96 over HDMI, but optical to the amp is
+  stereo, so it's for HDMI-direct AVR setups.
+- **Audio tracks:** `PCConfig.audio_track`. Windows app: labelled track menu in the
+  controls bar (shown when a file has >1 track) and the A key cycles. pcdump has `--track N`.
 - **Bursts:** AC3 is 6144 bytes, DTS (512-sample frames) is 2048. Writes to the ring are
   always whole bursts. The IOProc only switches between real data and **encoded silence
   bursts** on burst boundaries (keep-alive while paused/seeking/between tracks).
@@ -195,7 +205,9 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
 - **Settings keys in UserDefaults (domain `local.surroundplayer`):**
   - Device: `deviceUID`, `deviceName`.
   - Bitstream: `ac3Enabled` (means bitstream on/off), `bitstreamCodec` (0 AC3, 1 DTS),
-    `ac3Bitrate`, `dtsBitrate`, `ac3Passthrough`, `stereoAsAC3`.
+    `ac3Bitrate`, `dtsBitrate`, `ac3Passthrough`, `stereoAsAC3`, `multichannelPcm`
+    (Windows only so far). The Windows settings show these as one "Surround output"
+    choice: DD / DTS / Multichannel PCM / Off.
   - Other: `avOffsetMs`, `visualizerEnabled`.
 
 ## Testing — IMPORTANT

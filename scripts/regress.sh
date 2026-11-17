@@ -93,5 +93,20 @@ run "$W/src.flac" "$W/o8.raw" --pcm && {
     [ $(( sz > want - 48000 && sz < want + 48000 )) = 1 ] && pass "pcm: $sz bytes (~6 s stereo float)" || fail "pcm: $sz bytes, want ~$want"
 }
 
+echo "Multichannel PCM, untranscoded (FLAC 5.1 -> f32le 6 ch at the source rate)"
+run "$W/src.flac" "$W/o9.raw" --mc-pcm && {
+    sz=$(wc -c < "$W/o9.raw"); want=$((6 * 48000 * 6 * 4))
+    [ $(( sz > want - 96000 && sz < want + 96000 )) = 1 ] && pass "mc pcm: $sz bytes (~6 s, 6 ch float)" || fail "mc pcm: $sz bytes, want ~$want"
+    ff -f f32le -ar 48000 -ch_layout "5.1(side)" -i "$W/o9.raw" -c:a pcm_s16le "$W/o9.wav"
+    f=$("$PY" -I "$W/freqs.py" "$W/o9.wav")
+    [ "$f" = "$SRC_FREQS" ] && pass "mc pcm: channel mapping ($f)" || fail "mc pcm: channels '$f' != source '$SRC_FREQS'"
+}
+echo "Audio track selection (AC3 + FLAC tracks, --track 1)"
+ff -i "$W/ac3.mkv" -i "$W/src.flac" -map 0:a -map 1:a -c copy "$W/tracks.mkv"
+run "$W/tracks.mkv" "$W/o10.raw" --track 1 --mc-pcm && {
+    grep -q "^source: flac" "$W/log.txt" && grep -q "(playing)" "$W/log.txt" \
+        && pass "track 1 selected: $(grep '^source:' "$W/log.txt")" || fail "track selection: $(head -3 "$W/log.txt")"
+}
+
 [ $FAIL = 0 ] && echo "ALL PASSED" || echo "SOME CHECKS FAILED"
 exit $FAIL

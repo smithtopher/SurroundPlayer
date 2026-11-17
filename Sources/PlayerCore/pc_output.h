@@ -16,9 +16,14 @@ typedef struct PCOut PCOut;
 // IEC 61937 types: exclusive mode, 2ch/16-bit/48 kHz digital stream carrying the
 //   bursts; the ring then holds little-endian s16 stereo frames.
 // PC_STREAM_PCM: shared mode, ring holds interleaved float32 in the device's channel count/rate.
-PCOut *pc_out_open(const char *device_uid, PCStreamType type, char *err, int errlen);
+// PC_STREAM_PCM_EXCLUSIVE: `req` = wanted channels/rate/channel_mask; the ring holds float32 in
+//   the format actually opened (see pc_out_channels/rate/channel_mask), converted to the
+//   device's sample format in the render callback.
+PCOut *pc_out_open(const char *device_uid, PCStreamType type, const PCDeviceFormat *req, char *err, int errlen);
 // Testing sink: writes the ring-format bytes to a file, never blocks.
-PCOut *pc_out_open_file(const char *path, int bitstream, int pcm_channels, double pcm_rate, char *err, int errlen);
+PCOut *pc_out_open_file(const char *path, int bitstream, int pcm_channels, double pcm_rate, uint32_t channel_mask,
+                         char *err, int errlen);
+uint32_t pc_out_channel_mask(PCOut *o);  // 0 = default layout for the channel count
 void pc_out_close(PCOut *o);
 
 int pc_out_start(PCOut *o);

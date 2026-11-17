@@ -21,6 +21,10 @@ typedef enum {
     PC_STREAM_PCM = 0,
     PC_STREAM_IEC61937_AC3 = 1,
     PC_STREAM_IEC61937_DTS = 2,
+    // Decoded multichannel PCM with exclusive access, bit-exact (no OS mixer, no Windows
+    // speaker setup). The request is read from *fmt: channels, rate, channel_mask.
+    // Back-ends without it (CoreAudio for now) refuse it; the engine then uses PC_STREAM_PCM.
+    PC_STREAM_PCM_EXCLUSIVE = 3,
 } PCStreamType;
 
 // Format of the buffers handed to the render callback (interleaved).
@@ -28,12 +32,14 @@ typedef enum {
 //   16-bit IEC words go in the top bits) or 32-bit float (s16 / 32768, which the
 //   OS converts back bit-exactly when nothing else touches the samples).
 // PCM mode: must be 32-bit float, any channel count and rate.
+// PCM exclusive mode: 16-bit int, 32-bit int (24 or 32 valid bits) or 32-bit float.
 typedef struct {
     int channels;
     int bits;           // 16 or 32
     int is_float;
     double rate;
     double latency;     // seconds from a buffer's present time until it is audible
+    uint32_t channel_mask;  // speaker positions in channel order (WAVE SPEAKER_* == FFmpeg AV_CH_*), 0 = default
     char description[512];
 } PCDeviceFormat;
 
@@ -47,6 +53,7 @@ typedef void (*PCRenderCallback)(void *ctx, uint8_t *dst, int frames, int64_t pr
 //   Must refuse (return NULL with a message) on outputs that would play the data
 //   as PCM noise (speakers, headphones, Bluetooth): only HDMI/DisplayPort/S/PDIF.
 // PC_STREAM_PCM: shared mode.
+// PC_STREAM_PCM_EXCLUSIVE: *fmt holds the request on entry (see above).
 PCAudioDevice *pcad_open(const char *uid, PCStreamType type, PCDeviceFormat *fmt, char *err, int errlen);
 int pcad_start(PCAudioDevice *d, PCRenderCallback cb, void *ctx);
 // Stops, then undoes everything open changed (exclusive access, formats, mixing).

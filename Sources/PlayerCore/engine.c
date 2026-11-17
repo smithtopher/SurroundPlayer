@@ -991,15 +991,22 @@ static void drop_kept_output(PCPlayer *p) {
     p->kept_out = NULL;
 }
 
-static PCOut *take_output(PCPlayer *p, PCStreamType type, int burst, char *oerr, int len) {
-    int bitstream = type != PC_STREAM_PCM;
+// req: PC_STREAM_PCM_EXCLUSIVE only (channels / rate / channel_mask wanted)
+static PCOut *take_output(PCPlayer *p, PCStreamType type, int burst, const PCDeviceFormat *req, char *oerr, int len) {
+    int bitstream = type == PC_STREAM_IEC61937_AC3 || type == PC_STREAM_IEC61937_DTS;
     const PCConfig *cfg = &p->cfg;
-    if (cfg->dump_path) return pc_out_open_file(cfg->dump_path, bitstream, 2, 48000, oerr, len);
+    if (cfg->dump_path) {
+        if (type == PC_STREAM_PCM_EXCLUSIVE)
+            return pc_out_open_file(cfg->dump_path, 0, req->channels, req->rate, req->channel_mask, oerr, len);
+        return pc_out_open_file(cfg->dump_path, bitstream, 2, 48000, 0, oerr, len);
+    }
     const char *uid = cfg->device_uid ? cfg->device_uid : "";
     if (p->kept_out && pc_out_lost(p->kept_out)) drop_kept_output(p);   // never reuse a dead stream
     if (p->kept_out) {
-        // reuse only for the same device, mode and burst size (AC3 <-> DTS needs a fresh stream)
-        if (p->kept_type == type && (!bitstream || p->kept_burst == burst) && strcmp(p->kept_uid, uid) == 0) {
+        // reuse only for the same device, mode and burst size (AC3 <-> DTS needs a fresh stream);
+        // exclusive PCM is opened per file (its channels and rate follow the source)
+        if (p->kept_type == type && type != PC_STREAM_PCM_EXCLUSIVE && (!bitstream || p->kept_burst == burst) &&
+            strcmp(p->kept_uid, uid) == 0) {
             PCOut *o = p->kept_out;
             p->kept_out = NULL;
             pc_out_flush(o);
@@ -1007,7 +1014,7 @@ static PCOut *take_output(PCPlayer *p, PCStreamType type, int burst, char *oerr,
         }
         drop_kept_output(p);
     }
-    PCOut *o = pc_out_open(uid, type, oerr, len);
+    PCOut *o = pc_out_open(uid, type, req, oerr, len);
     if (o && bitstream) pc_out_set_burst_size(o, burst);
     return o;
 }
@@ -1032,7 +1039,7 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
         if (cfg->passthrough && (native_ac3 || native_dts)) {
             mode = PC_MODE_PASSTHROUGH;
             p->bs_codec = par->codec_id;
-        } else if (src_ch > 2 || cfg->stereo_bitstream) {
+        } else if (!cfg->multichannel_pcm && (src_ch > 2 || cfg->stereo_bitstream)) {
             mode = PC_MODE_TRANSCODE;
             p->bs_codec = dts ? AV_CODEC_ID_DTS : AV_CODEC_ID_AC3;
         }
@@ -1059,7 +1066,7 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
     char fallback[300] = "";
     if (mode != PC_MODE_PCM) {
         p->out = take_output(p, p->bs_codec == AV_CODEC_ID_DTS ? PC_STREAM_IEC61937_DTS : PC_STREAM_IEC61937_AC3,
-                             p->burst_bytes, oerr, sizeof(oerr));
+                             p->burst_bytes, NULL, oerr, sizeof(oerr));
         if (!p->out) {
             if (mode == PC_MODE_PASSTHROUGH && !p->adec) {
                 snprintf(err, errlen, "Bitstream output failed (%s) and no decoder available", oerr);
@@ -1069,12 +1076,27 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
             mode = PC_MODE_PCM;
         }
     }
-    if (mode == PC_MODE_PCM) {
-        p->out = take_output(p, PC_STREAM_PCM, 0, oerr, sizeof(oerr));
+    PCStreamType pcm_type = PC_STREAM_PCM;
+    if (mode == PC_MODE_PCM && cfg->multichannel_pcm && src_ch > 2) {
+        // multichannel PCM, untouched: the source's own layout and rate, exclusive
+        PCDeviceFormat req = { 0 };
+        AVChannelLayout lay = { 0 };
+        if (par->ch_layout.order == AV_CHANNEL_ORDER_NATIVE && src_ch <= 8) av_channel_layout_copy(&lay, &par->ch_layout);
+        else av_channel_layout_default(&lay, FFMIN(src_ch, 8));
+        req.channels = lay.nb_channels;
+        req.rate = par->sample_rate > 0 ? par->sample_rate : 48000;
+        req.channel_mask = (uint32_t)lay.u.mask;   // FFmpeg AV_CH_* bits == WAVE SPEAKER_* bits
+        av_channel_layout_uninit(&lay);
+        p->out = take_output(p, PC_STREAM_PCM_EXCLUSIVE, 0, &req, oerr, sizeof(oerr));
+        if (p->out) pcm_type = PC_STREAM_PCM_EXCLUSIVE;
+        else snprintf(fallback, sizeof(fallback), " [multichannel PCM unavailable: %s]", oerr);
+    }
+    if (mode == PC_MODE_PCM && !p->out) {
+        p->out = take_output(p, PC_STREAM_PCM, 0, NULL, oerr, sizeof(oerr));
         if (!p->out) { snprintf(err, errlen, "Audio output failed: %s", oerr); return -1; }
     }
     p->mode = mode;
-    p->out_type = mode == PC_MODE_PCM ? PC_STREAM_PCM
+    p->out_type = mode == PC_MODE_PCM ? pcm_type
                 : p->bs_codec == AV_CODEC_ID_DTS ? PC_STREAM_IEC61937_DTS : PC_STREAM_IEC61937_AC3;
     p->next_pts = NAN;
 
@@ -1082,10 +1104,19 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
     if (mode == PC_MODE_PCM) {
         int ch = pc_out_channels(p->out);
         if (ch > 8) ch = 8;
-        av_channel_layout_default(&p->out_layout, ch);
+        uint32_t mask = pc_out_channel_mask(p->out);
+        if (!mask || av_channel_layout_from_mask(&p->out_layout, mask) < 0 || p->out_layout.nb_channels != ch)
+            av_channel_layout_default(&p->out_layout, ch);
         p->out_rate = (int)pc_out_rate(p->out);
         p->out_fmt = AV_SAMPLE_FMT_FLT;
-        snprintf(p->info.output, sizeof(p->info.output), "PCM %d ch %d Hz -> %s%s", ch, p->out_rate, pc_out_description(p->out), fallback);
+        char lay[64] = "";
+        av_channel_layout_describe(&p->out_layout, lay, sizeof(lay));
+        if (pcm_type == PC_STREAM_PCM_EXCLUSIVE)
+            snprintf(p->info.output, sizeof(p->info.output), "PCM %s %d Hz (multichannel, untranscoded) -> %s%s", lay,
+                     p->out_rate, pc_out_description(p->out), fallback);
+        else
+            snprintf(p->info.output, sizeof(p->info.output), "PCM %d ch %d Hz -> %s%s", ch, p->out_rate,
+                     pc_out_description(p->out), fallback);
     } else {
         const char *cname = p->bs_codec == AV_CODEC_ID_DTS ? "DTS" : "Dolby Digital";
         snprintf(p->info.bitstream_codec, sizeof(p->info.bitstream_codec), "%s", cname);
