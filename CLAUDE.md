@@ -58,6 +58,14 @@ docs; this file is the context for continuing development.
       and SwapChainPanel, driven by CompositionTarget.Rendering. `SurroundPlayer.exe
       --vis-snapshot <dir>` writes a PNG per preset (verified: all 13 render like the Mac's).
       Live: 60 fps from the engine's tap; video keeps decoding but isn't drawn.
+    - **.cue sheets (2026-11-18, Windows app only, not on Mac yet):** `CueSheet.cs` parses them
+      (UTF-8/UTF-16, else the ANSI code page; a missing `FILE` falls back to the same name with
+      another media extension). `PlayerModel.Expand` turns a sheet into `Track`s with `Start`/`End`
+      and hides the audio files it covers. App-level only, no engine change: open at
+      `Start + pos`, position/seek/duration relative to the track. `Tick` (200 ms) handles the
+      `End` boundary: if the next item is the next span of the same file it just switches
+      `Current` (gapless, no reopen), otherwise it calls `Next()` (can overrun by up to ~200 ms).
+      Embedded FLAC CUESHEET tags aren't read.
     - **Not done on Windows:** cursor auto-hide only via ShowCursor, HDR (PQ) tone mapping,
       playlist persistence (not on Mac either).
     - Shortcuts: Mac ⌘ → Ctrl (Ctrl+←/→ prev/next, Ctrl+F search, Ctrl+O open, Ctrl+, settings).

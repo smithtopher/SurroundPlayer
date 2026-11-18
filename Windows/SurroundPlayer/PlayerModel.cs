@@ -38,17 +38,34 @@ public sealed class Track : Observable
     public string Ext { get; }
     public string SearchText { get; }
 
-    public Track(string path)
+    /// Cue sheet tracks: a span of `Path` from `Start` to `End` (null = end of file).
+    public CueTrack? Cue { get; }
+    public double Start => Cue?.Start ?? 0;
+    public double? End => Cue?.End;
+
+    public Track(string path) : this(path, null) { }
+
+    public Track(CueTrack cue) : this(cue.AudioPath, cue) { }
+
+    private Track(string path, CueTrack? cue)
     {
         Path = path;
-        Name = System.IO.Path.GetFileNameWithoutExtension(path);
+        Cue = cue;
+        Name = cue != null ? $"{cue.Number:00}. {cue.Title}" : System.IO.Path.GetFileNameWithoutExtension(path);
         Folder = new DirectoryInfo(System.IO.Path.GetDirectoryName(path) ?? "").Name;
         Ext = System.IO.Path.GetExtension(path).TrimStart('.').ToUpperInvariant();
         // last 4 path components without extension, case/diacritic-folded (like the Mac app)
-        var noExt = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(path) ?? "", Name);
+        var noExt = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(path) ?? "", System.IO.Path.GetFileNameWithoutExtension(path));
         var parts = noExt.Split(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
-        SearchText = Fold(string.Join(" ", parts.Skip(Math.Max(0, parts.Length - 4))));
+        var search = string.Join(" ", parts.Skip(Math.Max(0, parts.Length - 4)));
+        if (cue != null) search += $" {cue.Title} {cue.Performer} {cue.Album}";
+        SearchText = Fold(search);
     }
+
+    /// The next item continues this one in the same file (consecutive cue tracks).
+    public bool ContinuesInto(Track next) =>
+        End is double end && next.Cue != null && next.Path.Equals(Path, StringComparison.OrdinalIgnoreCase)
+        && Math.Abs(next.Start - end) < 0.001;
 
     private string _indicator = "";
     /// Segoe Fluent glyph shown in the playlist row (speaker when current).
@@ -324,17 +341,19 @@ public sealed class PlayerModel : Observable
     {
         IsScanning = true;
         var list = paths.ToList();
-        var files = await Task.Run(() => Expand(list));
+        var tracks = await Task.Run(() => Expand(list));
         IsScanning = false;
-        if (files.Count == 0) return;
+        if (tracks.Count == 0) return;
         int at = Math.Clamp(insertAt ?? Playlist.Count, 0, Playlist.Count);
-        var first = new Track(files[0]);
-        Playlist.Insert(at, first);
-        for (int i = 1; i < files.Count; i++) Playlist.Insert(at + i, new Track(files[i]));
-        if (playFirst) Play(first);
+        for (int i = 0; i < tracks.Count; i++) Playlist.Insert(at + i, tracks[i]);
+        if (playFirst) Play(tracks[0]);
     }
 
-    public static List<string> Expand(IEnumerable<string> paths)
+    private static bool IsCue(string path) => System.IO.Path.GetExtension(path).Equals(".cue", StringComparison.OrdinalIgnoreCase);
+
+    /// Files and folders → playlist items. A .cue sheet becomes its tracks, and the audio
+    /// files it covers aren't listed again on their own.
+    public static List<Track> Expand(IEnumerable<string> paths)
     {
         var files = new List<string>();
         foreach (var p in paths)
@@ -347,7 +366,7 @@ public sealed class PlayerModel : Observable
                     var opts = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true,
                                                         AttributesToSkip = FileAttributes.Hidden | FileAttributes.System };
                     foreach (var f in Directory.EnumerateFiles(p, "*", opts))
-                        if (MediaExtensions.Contains(System.IO.Path.GetExtension(f).TrimStart('.'))) found.Add(f);
+                        if (IsCue(f) || MediaExtensions.Contains(System.IO.Path.GetExtension(f).TrimStart('.'))) found.Add(f);
                 }
                 catch { }
                 found.Sort(Native.StrCmpLogicalW);   // Explorer's natural order
@@ -355,7 +374,26 @@ public sealed class PlayerModel : Observable
             }
             else if (File.Exists(p)) files.Add(p);
         }
-        return files;
+
+        var sheets = new Dictionary<string, List<CueTrack>>(StringComparer.OrdinalIgnoreCase);
+        var covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in files.Where(IsCue))
+        {
+            if (sheets.ContainsKey(f)) continue;
+            var cue = CueSheet.Load(f, MediaExtensions);
+            sheets[f] = cue;
+            foreach (var t in cue) covered.Add(System.IO.Path.GetFullPath(t.AudioPath));
+        }
+
+        var tracks = new List<Track>();
+        var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in files)
+        {
+            if (!emitted.Add(f)) continue;
+            if (IsCue(f)) tracks.AddRange(sheets[f].Select(c => new Track(c)));
+            else if (!covered.Contains(System.IO.Path.GetFullPath(f))) tracks.Add(new Track(f));
+        }
+        return tracks;
     }
 
     public void Remove(IEnumerable<Track> tracks)
@@ -392,7 +430,7 @@ public sealed class PlayerModel : Observable
             passthrough = Ac3Passthrough ? 1 : 0,
             stereo_bitstream = StereoAsAC3 ? 1 : 0,
             audio_track = audioTrack,
-            start_position = start,
+            start_position = track.Start + Math.Max(0, start),   // cue tracks: offset into the file
             av_offset = AvOffsetMs / 1000,
         };
         string uid = EffectiveDeviceUID;
@@ -462,10 +500,13 @@ public sealed class PlayerModel : Observable
         else Play(Playlist[i - 1]);
     }
 
+    /// `seconds` is relative to the current item (a cue track's start).
     public void Seek(double seconds)
     {
-        if (!_isOpen) return;
-        Native.pc_player_seek(_player, seconds);
+        if (!_isOpen || Current == null) return;
+        seconds = Math.Max(0, seconds);
+        if (Duration > 0) seconds = Math.Min(seconds, Duration);
+        Native.pc_player_seek(_player, Current.Start + seconds);
         Position = seconds;
     }
 
@@ -540,8 +581,42 @@ public sealed class PlayerModel : Observable
             }
             catch { }
         }
-        if (!_isOpen || IsScrubbing) return;
-        Position = Native.pc_player_position(_player);
+        if (!_isOpen || Current == null) return;
+        double abs = Native.pc_player_position(_player);
+        // cue track boundary: the engine keeps playing the file, so the model moves on itself
+        if (Current.End is double end && abs >= end - 0.02)
+        {
+            int i = Playlist.IndexOf(Current);
+            var next = i >= 0 && i + 1 < Playlist.Count ? Playlist[i + 1] : null;
+            if (next != null && Current.ContinuesInto(next))
+            {
+                Current = next;          // same file, next track: no reopen, no gap
+                ApplyTrackInfo(next);
+            }
+            else
+            {
+                Next();
+                return;
+            }
+        }
+        if (IsScrubbing) return;
+        Position = Math.Max(0, abs - Current.Start);
+    }
+
+    private double _fileDuration;   // engine duration of the open file
+
+    /// Title/artist/album and duration for `track`: cue metadata over the file's tags.
+    private void ApplyTrackInfo(Track track)
+    {
+        var cue = track.Cue;
+        if (cue != null)
+        {
+            Title = cue.Title;
+            if (cue.Performer.Length > 0) Artist = cue.Performer;
+            if (cue.Album.Length > 0) Album = cue.Album;
+        }
+        double end = track.End ?? _fileDuration;
+        Duration = Math.Max(0, end - track.Start);
     }
 
     private void ClearInfo()
@@ -568,7 +643,8 @@ public sealed class PlayerModel : Observable
         OutputMode = info.mode;
         BitstreamCodecName = Native.Str(info.bitstream_codec, 32);
         HasVideo = info.has_video != 0;
-        Duration = info.duration;
+        _fileDuration = info.duration;
+        ApplyTrackInfo(track);
         var names = new List<string>();
         int count = Native.pc_player_audio_track_count(_player);
         var buf = new byte[256];
