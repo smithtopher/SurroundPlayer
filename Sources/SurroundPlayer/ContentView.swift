@@ -9,29 +9,21 @@ struct ContentView: View {
     @State private var hideControls: DispatchWorkItem?
 
     var body: some View {
-        HSplitView {
-            VStack(spacing: 0) {
-                stage
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay(alignment: .bottom) {
-                        if model.isFullScreen {
-                            ControlsBar()
-                                .clipShape(RoundedRectangle(cornerRadius: 14))
-                                .frame(maxWidth: 900)
-                                .padding(24)
-                                .opacity(controlsVisible ? 1 : 0)
-                                .onHover { inside in if inside { pokeControls(keep: true) } }
-                        }
+        Group {
+            if model.isFullScreen {
+                // Just the picture, out of the split view (which insets for the title bar):
+                // it runs under the top bar, which fades with the controls.
+                stageColumn
+                    .ignoresSafeArea()
+            } else {
+                HSplitView {
+                    stageColumn
+                        .frame(minWidth: 520)
+                    if showPlaylist {
+                        PlaylistView()
+                            .frame(minWidth: 220, idealWidth: 280, maxWidth: 420)
                     }
-                    .onContinuousHover { phase in
-                        if case .active = phase, model.isFullScreen { pokeControls() }
-                    }
-                if !model.isFullScreen { ControlsBar() }
-            }
-            .frame(minWidth: 520)
-            if showPlaylist && !model.isFullScreen {
-                PlaylistView()
-                    .frame(minWidth: 220, idealWidth: 280, maxWidth: 420)
+                }
             }
         }
         .background(WindowAccessor { model.attach(window: $0) })
@@ -66,14 +58,41 @@ struct ContentView: View {
         }
     }
 
-    /// Full screen: show the controls on mouse movement, hide them (and the cursor) after 3 s.
+    private var stageColumn: some View {
+        VStack(spacing: 0) {
+            stage
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .bottom) {
+                    if model.isFullScreen {
+                        ControlsBar()
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .frame(maxWidth: 900)
+                            .padding(24)
+                            .opacity(controlsVisible ? 1 : 0)
+                            .onHover { inside in if inside { pokeControls(keep: true) } }
+                    }
+                }
+                .onContinuousHover { phase in
+                    if case .active = phase, model.isFullScreen { pokeControls() }
+                }
+            if !model.isFullScreen { ControlsBar() }
+        }
+    }
+
+    /// Full screen: show the controls and the top bar on mouse movement, hide them (and
+    /// the cursor) after 3 s, unless the mouse is resting on the top bar.
     private func pokeControls(keep: Bool = false) {
         hideControls?.cancel()
-        if !controlsVisible { withAnimation(.easeOut(duration: 0.2)) { controlsVisible = true } }
+        if !controlsVisible {
+            withAnimation(.easeOut(duration: 0.2)) { controlsVisible = true }
+            model.setTopBarVisible(true)
+        }
         guard !keep else { return }
         let w = DispatchWorkItem {
             guard model.isFullScreen else { return }
+            if model.mouseIsOverTopBar { pokeControls(); return }
             withAnimation(.easeIn(duration: 0.5)) { controlsVisible = false }
+            model.setTopBarVisible(false)
             NSCursor.setHiddenUntilMouseMoves(true)
         }
         hideControls = w

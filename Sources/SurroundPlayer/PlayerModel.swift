@@ -156,23 +156,28 @@ final class PlayerModel: ObservableObject {
     // MARK: window / full screen / keys
 
     private var keyMonitor: Any?
+    private var hadFullSizeContent = false   // windowed style, restored on leaving full screen
 
     func attach(window: NSWindow) {
         guard self.window !== window else { return }
         self.window = window
         isFullScreen = window.styleMask.contains(.fullScreen)
+        // full screen adds .fullSizeContentView; put back exactly what the window had
+        hadFullSizeContent = window.styleMask.contains(.fullSizeContentView)
         let nc = NotificationCenter.default
-        // full screen = just the picture: no toolbar, no playlist, auto-hiding controls
+        // full screen = just the picture: no playlist; the picture runs under the toolbar,
+        // which fades out with the controls (ContentView.pokeControls)
         nc.addObserver(forName: NSWindow.willEnterFullScreenNotification, object: window, queue: .main) { [weak window] _ in
             MainActor.assumeIsolated {
                 PlayerModel.shared.isFullScreen = true
-                window?.toolbar?.isVisible = false
+                window?.styleMask.insert(.fullSizeContentView)
             }
         }
         nc.addObserver(forName: NSWindow.willExitFullScreenNotification, object: window, queue: .main) { [weak window] _ in
             MainActor.assumeIsolated {
+                PlayerModel.shared.setTopBarVisible(true)
                 PlayerModel.shared.isFullScreen = false
-                window?.toolbar?.isVisible = true
+                if !PlayerModel.shared.hadFullSizeContent { window?.styleMask.remove(.fullSizeContentView) }
             }
         }
         if keyMonitor == nil {
@@ -183,6 +188,28 @@ final class PlayerModel: ObservableObject {
     }
 
     func toggleFullScreen() { (window ?? NSApp.keyWindow)?.toggleFullScreen(nil) }
+
+    /// In full screen AppKit puts the title bar + toolbar in a window of its own
+    /// (NSToolbarFullScreenWindow) that is otherwise always shown. Fade that window.
+    private var fullScreenTopBar: NSWindow? {
+        guard let w = window, w.styleMask.contains(.fullScreen),
+              let bar = w.standardWindowButton(.closeButton)?.window, bar !== w else { return nil }
+        return bar
+    }
+
+    func setTopBarVisible(_ visible: Bool) {
+        guard let bar = fullScreenTopBar else { return }
+        bar.ignoresMouseEvents = !visible   // hidden: clicks and hovers reach the picture underneath
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = visible ? 0.2 : 0.5
+            bar.animator().alphaValue = visible ? 1 : 0
+        }
+    }
+
+    var mouseIsOverTopBar: Bool {
+        guard let bar = fullScreenTopBar, bar.alphaValue > 0 else { return false }
+        return bar.frame.contains(NSEvent.mouseLocation)
+    }
 
     /// Single-key controls for the player window. Skipped while typing in a text field,
     /// and for key combos with ⌘/⌃/⌥ (those belong to the menus).

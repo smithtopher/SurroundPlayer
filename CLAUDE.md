@@ -220,8 +220,16 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
   ⌘←/⌘→, F, V, [ ], L and Esc. Menu items only show the key in their title.
 - **Visualiser:** off by default (`visualizerEnabled`). When on it **overrides the video
   track too**: video keeps decoding in sync, but `VideoSink.isEnabled = false` drops the frames.
-- **Full screen:** hides the toolbar (`window.toolbar.isVisible`) and the playlist; the
-  controls overlay and cursor auto-hide after 3 s.
+- **Full screen:** the playlist is hidden and the stage is laid out outside the `HSplitView`
+  (the split view applies the title-bar inset itself, so `.ignoresSafeArea` doesn't work
+  inside it). The window gets `.fullSizeContentView` so the picture runs under the top bar.
+  - The controls overlay, the top bar and the cursor fade out after 3 s without mouse movement.
+  - AppKit keeps the full-screen title bar + toolbar in its own `NSToolbarFullScreenWindow`.
+    It's always shown, and `toolbar.isVisible = false` gets undone. So
+    `PlayerModel.setTopBarVisible` fades that window's alpha and sets `ignoresMouseEvents`
+    while it's hidden. It doesn't hide while the mouse rests on it.
+  - Testing: with the display asleep, full screen silently fails to enter. Use
+    `caffeinate -u` first.
 - **Visualiser presets:** these are original (13 in `VisualizerPresets.swift`). It does
   not load `.milk` files. projectM (OpenGL) was considered and rejected; it's still an option
   if the user wants real MilkDrop presets.
