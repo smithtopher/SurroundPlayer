@@ -72,7 +72,7 @@ docs; this file is the context for continuing development.
       cover/folder/front > first alphabetically). Shown when the visualiser is off and there's
       no video. The Mac app does the same (`FolderArt.swift`, since 2026-11-19).
     - **Not done on Windows:** cursor auto-hide only via ShowCursor, HDR (PQ) tone mapping,
-      (playlist persistence is Windows-only: see below).
+      (playlist persistence: both apps now, see below).
     - Shortcuts: Mac ⌘ → Ctrl (Ctrl+←/→ prev/next, Ctrl+F search, Ctrl+O open, Ctrl+, settings).
       Ctrl+R opens the Open Recent menu (Windows only; no menu bar there).
     - **Playlist persistence (Windows 1.2.4):** `PlaylistFile.cs`. Session in
@@ -83,6 +83,12 @@ docs; this file is the context for continuing development.
       by its entries (nested playlists and URLs skipped); Save… / Ctrl+S writes UTF-8 `.m3u8` with
       relative paths, cue tracks as their sheet (`CueTrack.CuePath`). Load… / Ctrl+L
       (`PlayerModel.LoadPlaylist`) replaces the playlist and plays the first entry; Open adds.
+      **Mac (1.2.7):** `PlaylistFile.swift`, same rules and JSON shape, session in
+      `~/Library/Application Support/SurroundPlayer/playlist.json`, saved 2 s after a change and in
+      `shutdown()` (app quit and SIGINT/SIGTERM), restored in `PlayerModel.init`. File menu: Load
+      Playlist… ⌘L, Save Playlist… ⌘S; Load…/Save… also under the playlist. `.m3u/.m3u8` open from
+      Finder. Tested: M3U write/read (relative paths, cue sheets once, Windows-written lists with
+      backslashes/CRLF/BOM) and quit → relaunch restoring exact cue tracks + position.
     - **Open Recent (Windows, 2026-11-19):** a history button (DropDownButton) next to the
       folder button, same rules as the Mac menu (see `recentFiles` below), in
       `PlayerModel.NoteRecent/OpenRecent/RecentTitle`, menu built in `RecentMenu_Opening`.
@@ -236,10 +242,19 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
   else 2-letter; forced tracks shown when nothing else is; flags from
   `pc_player_subtitle_track_flags`), overlay
   `SubtitleLayer` in `MainWindow` polled every 40 ms, placed over the uniform-fit video rect.
+  **Mac app (1.2.7):** `Subtitles.swift` (same rules; non-UTF-8 files are converted into
+  `$TMPDIR/SurroundPlayer/subtitles`; languages from `Locale.LanguageCode`), `SubtitleOverlay`
+  in `ContentView.swift` over the video, CC menu in the controls bar (`ViewThatFits` drops
+  labels before buttons), S key, Playback > Next Subtitle Track / Load Subtitle File….
+  Unlike Windows it places subtitles in the **displayed** rect (`VideoSink.displaySize`, the
+  pixel aspect ratio applied), so anamorphic video (DVD 720x480 SAR 32:27 → 853x480) is right.
+  Tested in the app (`SURROUND_DEBUG` prints the subtitle state): default-flagged SubRip timing,
+  PGS bitmaps on an HD and an anamorphic canvas, a Windows-1252 `movie.de.srt` sidecar picked
+  by the remembered language. Not checked by eye (no screenshots), DVD/DVB untested.
 - **Source format:** `PCInfo.source_rate` / `source_bits` (`audio_stream_bits`:
   `bits_per_raw_sample`, else the sample size of lossless/PCM codecs, else 0 = lossy). The
   source description ends ", 24-bit". Windows shows "24-bit / 96 kHz" beside the output badge
-  (`PlayerModel.SourceFormat`); the Mac UI doesn't use the fields yet. PCInfo grew at the end:
+  (`PlayerModel.SourceFormat`; Mac: `sourceFormat`, same place). PCInfo grew at the end:
   `Native.cs` mirrors it.
 - **Bursts:** AC3 is 6144 bytes, DTS (512-sample frames) is 2048. Writes to the ring are
   always whole bursts. The IOProc only switches between real data and **encoded silence
@@ -288,12 +303,13 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
     `ac3Bitrate`, `dtsBitrate`, `ac3Passthrough`, `stereoAsAC3`, `multichannelPcm`.
     Both apps show these as one "Surround output" choice: DD / DTS / Multichannel PCM / Off
     (Mac: `PlayerModel.surroundOutput`, which sets them together with a single reopen).
-  - Other: `avOffsetMs`, `visualizerEnabled`.
+  - Other: `avOffsetMs`, `visualizerEnabled`, `subtitleLanguage` ("" = the file's default
+    track, "off", "*", or a 2-letter code; set when the user picks a track).
   - `recentFiles`: File > Open Recent, newest first, at most 10 paths. It records what the user
     opened (files, folders or cue sheets, via Open…, drops, Finder), in `PlayerModel.add`
     (Windows: `PlayerModel.Add`, the toolbar's history button). Auto-advance doesn't add to it.
 - **Version:** `CFBundleShortVersionString` in `Resources/Info.plist`, shown in Settings. Kept
-  in step with the Windows `<Version>` (1.2.1 = same features on both).
+  in step with the Windows `<Version>` (1.2.7 = same features on both).
 
 ## Testing — IMPORTANT
 - **Never play audible test signals.** The TV is often the default output, and a test once
@@ -341,7 +357,7 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
     `pcdump`.
 - **Untested:** DTS-HD sources (no encoder to make test files), and audible playback through
   the amp.
-- **Not implemented:** subtitles in the Mac UI (the engine has them), gapless playback (except between cue tracks of one file), persisting the playlist across launches on Mac,
+- **Not implemented:** gapless playback (except between cue tracks of one file),
   E-AC3/TrueHD/DTS-HD bitstreaming over HDMI direct to an AVR (the user's chain is optical,
   so AC3/DTS core is the ceiling), and notarization.
 - A clock stall after a seek happened once on the very first bitstream run (when the TV

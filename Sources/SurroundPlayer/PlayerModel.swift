@@ -5,39 +5,6 @@ import PlayerCore
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct Track: Identifiable, Hashable {
-    let id = UUID()
-    let url: URL
-    /// Cue sheet tracks: a span of `url` from `start` to `end` (nil = end of file).
-    let cue: CueTrack?
-    var start: Double { cue?.start ?? 0 }
-    var end: Double? { cue?.end }
-    var name: String {
-        if let cue { return String(format: "%02d. %@", cue.number, cue.title) }
-        return url.deletingPathExtension().lastPathComponent
-    }
-    /// Parent folder, e.g. the album folder in an Artist/Album/Track library.
-    var folder: String { url.deletingLastPathComponent().lastPathComponent }
-    /// Lowercased, diacritic-folded text the sidebar search matches against.
-    let searchText: String
-
-    init(url: URL, cue: CueTrack? = nil) {
-        self.url = url
-        self.cue = cue
-        var parts = url.deletingPathExtension().pathComponents.suffix(4).joined(separator: " ")
-        if let cue { parts += " \(cue.title) \(cue.performer) \(cue.album)" }
-        searchText = parts.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-    }
-
-    func matches(_ terms: [String]) -> Bool { terms.allSatisfy { searchText.contains($0) } }
-
-    /// `next` continues this item in the same file (consecutive cue tracks): gapless, no reopen.
-    func continues(into next: Track) -> Bool {
-        guard let end, next.cue != nil, next.url.standardizedFileURL.path == url.standardizedFileURL.path else { return false }
-        return abs(next.start - end) < 0.001
-    }
-}
-
 struct AudioDevice: Identifiable, Hashable {
     let uid: String
     let name: String
@@ -70,7 +37,7 @@ final class PlayerModel: ObservableObject {
     ]
 
     // playlist / state
-    @Published var playlist: [Track] = []
+    @Published var playlist: [Track] = [] { didSet { scheduleSave() } }
     @Published var currentIndex: Int?
     @Published var selection: Set<Track.ID> = []
     @Published var isPlaying = false
@@ -90,6 +57,24 @@ final class PlayerModel: ObservableObject {
     @Published var artwork: NSImage?
     @Published var audioTracks: [String] = []
     @Published var currentAudioTrack = -1
+    /// Short source format for the controls bar, e.g. "24-bit / 96 kHz" or "44.1 kHz" (lossy).
+    @Published var sourceFormat = ""
+
+    // subtitles (logic in Subtitles.swift)
+    @Published var subtitleTracks: [String] = []
+    @Published var currentSubtitleTrack = -1
+    @Published var subtitleFrame = SubtitleFrame.none
+    @Published var videoWidth = 0
+    @Published var videoHeight = 0
+    /// The video's displayed size (pixel aspect applied; VideoSink), for placing subtitles.
+    @Published var videoDisplaySize = CGSize.zero
+    var subtitleLangs: [String] = []         // normalised 2-letter codes ("" = unknown), per track
+    var subtitleFlags: [Int32] = []          // PC_SUBFLAG_*, per track
+    var subFilePath: String?                 // the media file the next two belong to
+    var userSubFiles: [URL] = []             // loaded with "Load Subtitle File…"
+    var keepSubtitle: Int?                   // selection to restore when the same file reopens
+    var subSerial: Int32 = -1
+    private var subTimer: Timer?
     @Published var errorMessage: String?
 
     @Published var devices: [AudioDevice] = []
@@ -145,6 +130,10 @@ final class PlayerModel: ObservableObject {
         }
     }
     private var batchingSettings = false
+    /// "" follow the file's default track, "off", "*" any, else a 2-letter language code.
+    var subtitleLanguage: String = defaults.string(forKey: "subtitleLanguage") ?? "" {
+        didSet { Self.defaults.set(subtitleLanguage, forKey: "subtitleLanguage") }
+    }
     @Published var avOffsetMs: Double = defaults.double(forKey: "avOffsetMs") {
         didSet { Self.defaults.set(avOffsetMs, forKey: "avOffsetMs"); pc_player_set_av_offset(player, avOffsetMs / 1000) }
     }
@@ -274,17 +263,18 @@ final class PlayerModel: ObservableObject {
         case "[", "p": visualizer?.previousPreset()
         case "l": visLocked.toggle()
         case "a": cycleAudioTrack()
+        case "s": cycleSubtitleTrack()
         default: return false
         }
         return true
     }
 
     let sink = VideoSink()
-    private let player: OpaquePointer
+    let player: OpaquePointer
     private let bridge: EngineBridge
     private var timer: Timer?
     private var activity: NSObjectProtocol?
-    private var isOpen = false
+    private(set) var isOpen = false
     private var deviceListener: AudioObjectPropertyListenerBlock?
 
     private init() {
@@ -311,6 +301,10 @@ final class PlayerModel: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
+        subTimer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pollSubtitle() }
+        }
+        restoreSession()
     }
 
     // MARK: devices
@@ -397,6 +391,85 @@ final class PlayerModel: ObservableObject {
         }
     }
 
+    // MARK: playlist persistence and playlist files
+
+    private var saveWork: DispatchWorkItem?
+    private var resumeTrackID: UUID?        // restored current track: Play resumes at resumeAt
+    private var resumeAt: Double = 0
+    private var restoring = false
+
+    /// Saves the session a couple of seconds after the last change (and at quit), so a crash
+    /// or kill loses little.
+    func scheduleSave() {
+        guard !restoring else { return }
+        saveWork?.cancel()
+        let w = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.saveSession() } }
+        saveWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: w)
+    }
+
+    private func saveSession() {
+        saveWork?.cancel()
+        let cur = currentIndex.flatMap { playlist.indices.contains($0) ? $0 : nil }
+        let pos = isOpen ? position : (cur.map { playlist[$0].id } == resumeTrackID && resumeTrackID != nil ? resumeAt : 0)
+        PlaylistFile.saveSession(tracks: playlist, current: cur, position: pos)
+    }
+
+    /// Brings back the last session's playlist (entries whose files are gone are dropped),
+    /// with the current track selected but not playing.
+    private func restoreSession() {
+        guard let s = PlaylistFile.loadSession() else { return }
+        restoring = true
+        defer { restoring = false }
+        var tracks: [Track] = []
+        var current: Int?
+        for (i, e) in s.tracks.enumerated() where !e.path.isEmpty && FileManager.default.fileExists(atPath: e.path) {
+            let url = URL(fileURLWithPath: e.path)
+            if i == s.current { current = tracks.count }
+            tracks.append(Track(url: url, cue: e.cue))
+        }
+        playlist = tracks
+        if Self.debug { FileHandle.standardError.write("[app] restored \(tracks.count) of \(s.tracks.count) playlist items\n".data(using: .utf8)!) }
+        guard let current else { return }
+        let t = tracks[current]
+        currentIndex = current
+        selection = [t.id]
+        resumeTrackID = t.id
+        resumeAt = max(0, s.position)
+        // show what Play will resume (the duration is only known once the file is opened)
+        title = t.cue?.title ?? t.name
+        artist = t.cue?.performer ?? ""
+        album = t.cue?.album ?? ""
+    }
+
+    func showSavePlaylistPanel() {
+        guard !playlist.isEmpty else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "m3u8") ?? .plainText]
+        panel.nameFieldStringValue = "Playlist.m3u8"
+        if panel.runModal() == .OK, let url = panel.url {
+            do { try PlaylistFile.writeM3U(url, tracks: playlist) } catch {
+                errorMessage = "Could not save the playlist: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func showLoadPlaylistPanel() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = ["m3u8", "m3u"].compactMap { UTType(filenameExtension: $0) }
+        if panel.runModal() == .OK, let url = panel.url { loadPlaylist(url) }
+    }
+
+    /// Replaces the playlist with an .m3u/.m3u8 file's entries and plays the first one.
+    func loadPlaylist(_ url: URL) {
+        guard !PlaylistFile.readM3U(url).isEmpty else {
+            errorMessage = "\(url.lastPathComponent) has no playable entries"
+            return
+        }
+        clearPlaylist()
+        add(urls: [url], playFirst: true)
+    }
+
     // MARK: recently opened (File > Open Recent)
 
     static let maxRecents = 10
@@ -449,8 +522,10 @@ final class PlayerModel: ObservableObject {
     /// Files and folders -> playlist items. A .cue sheet becomes its tracks, and the audio
     /// files it covers aren't listed again on their own.
     nonisolated static func expand(_ urls: [URL]) -> [Track] {
+        // a playlist file stands for its entries (files, cue sheets or folders), in place
+        let input = urls.flatMap { PlaylistFile.isPlaylist($0) ? PlaylistFile.readM3U($0) : [$0] }
         var files: [URL] = []
-        for url in urls {
+        for url in input {
             var isDir: ObjCBool = false
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { continue }
             if isDir.boolValue {
@@ -509,6 +584,8 @@ final class PlayerModel: ObservableObject {
         bridge.generation += 1
         if currentIndex != index { sink.clear() }
         errorMessage = nil
+        resumeTrackID = nil
+        prepareSubtitlesForOpen(track)
 
         var cfg = PCConfig()
         // multichannel PCM transcodes nothing: bitstream is then only native passthrough,
@@ -541,6 +618,7 @@ final class PlayerModel: ObservableObject {
         }
         isOpen = true
         isPlaying = !paused
+        scheduleSave()
         let resolved = uidString.isEmpty ? devices.first(where: { $0.isDefault }) : devices.first(where: { $0.uid == uidString })
         openDeviceUID = resolved?.uid
         openDeviceName = resolved?.name
@@ -551,9 +629,12 @@ final class PlayerModel: ObservableObject {
 
     func togglePlay() {
         guard isOpen else {
-            if let i = currentIndex ?? (playlist.isEmpty ? nil : 0) { play(index: i) }
+            if let i = currentIndex ?? (playlist.isEmpty ? nil : 0) {
+                play(index: i, start: playlist[i].id == resumeTrackID ? resumeAt : 0)
+            }
             return
         }
+        scheduleSave()
         isPlaying.toggle()
         pc_player_set_paused(player, isPlaying ? 0 : 1)
         updateActivity()
@@ -623,6 +704,7 @@ final class PlayerModel: ObservableObject {
     }
 
     func shutdown() {
+        saveSession()
         pc_player_close(player)
     }
 
@@ -655,13 +737,23 @@ final class PlayerModel: ObservableObject {
         if Self.debug {
             debugTicks += 1
             if debugTicks % 5 == 0 {
-                FileHandle.standardError.write("[app] items=\(playlist.count) \(title) pos=\(String(format: "%.2f", position))/\(String(format: "%.1f", duration)) playing=\(isPlaying) mode=\(outputMode) | \(outputDescription) | video: \(videoDescription) | art=\(artwork != nil) fullscreen=\(isFullScreen) \(showsVisualizer ? visualizer!.debugStatus : "vis off")\n".data(using: .utf8)!)
+                FileHandle.standardError.write("[app] items=\(playlist.count) \(title) pos=\(String(format: "%.2f", position))/\(String(format: "%.1f", duration)) playing=\(isPlaying) mode=\(outputMode) | \(outputDescription) | video: \(videoDescription) | src=\(sourceFormat) art=\(artwork != nil) sub=\(currentSubtitleTrack)/\(subtitleTracks.count) \(subtitleDebug) fullscreen=\(isFullScreen) \(showsVisualizer ? visualizer!.debugStatus : "vis off")\n".data(using: .utf8)!)
             }
         }
     }
 
+    private var subtitleDebug: String {
+        let f = subtitleFrame
+        switch f.kind {
+        case .none: return "[none]"
+        case .text: return "[text \"\(f.text.replacingOccurrences(of: "\n", with: "|"))\"]"
+        case .bitmap: return "[bitmap \(f.w)x\(f.h) at \(f.x),\(f.y) on \(f.refW)x\(f.refH) image=\(f.image != nil) display=\(Int(videoDisplaySize.width))x\(Int(videoDisplaySize.height))]"
+        }
+    }
+
     private func clearInfo() {
-        title = ""; artist = ""; album = ""; sourceAudio = ""; outputDescription = ""; videoDescription = ""
+        title = ""; artist = ""; album = ""; sourceAudio = ""; sourceFormat = ""; outputDescription = ""; videoDescription = ""
+        subtitleTracks = []; currentSubtitleTrack = -1; videoWidth = 0; videoHeight = 0
         outputMode = -1; bitstreamCodecName = ""; hasVideo = false; artwork = nil; audioTracks = []; currentAudioTrack = -1; duration = 0
     }
 
@@ -672,6 +764,9 @@ final class PlayerModel: ObservableObject {
         artist = cString(info.artist)
         album = cString(info.album)
         sourceAudio = cString(info.source_audio)
+        sourceFormat = Self.formatRate(Int(info.source_rate), bits: Int(info.source_bits))
+        videoWidth = Int(info.video_width)
+        videoHeight = Int(info.video_height)
         outputDescription = cString(info.output)
         videoDescription = cString(info.video)
         outputMode = info.mode
@@ -685,6 +780,7 @@ final class PlayerModel: ObservableObject {
             return String(cString: buf)
         }
         currentAudioTrack = Int(pc_player_current_audio_track(player))
+        loadSubtitles(track)
         var size: Int32 = 0
         if let art = pc_player_cover_art(player, &size), size > 0 {
             artwork = NSImage(data: Data(bytes: art, count: Int(size)))
@@ -698,6 +794,13 @@ final class PlayerModel: ObservableObject {
             pc_player_get_info(self.player, &i2)
             self.videoDescription = cString(i2.video)
         }
+    }
+
+    /// "24-bit / 96 kHz", or just "44.1 kHz" for lossy formats.
+    nonisolated static func formatRate(_ rate: Int, bits: Int) -> String {
+        guard rate > 0 else { return "" }
+        let khz = rate % 1000 == 0 ? "\(rate / 1000) kHz" : String(format: "%.1f kHz", Double(rate) / 1000)
+        return bits > 0 ? "\(bits)-bit / \(khz)" : khz
     }
 
     private var fileDuration: Double = 0     // engine duration of the open file

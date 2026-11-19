@@ -10,6 +10,12 @@ final class VideoSink: @unchecked Sendable {
     private var format: CMVideoFormatDescription?
     private let enabledLock = NSLock()
     private var _enabled = true
+    private var _displaySize = CGSize.zero
+    /// Size the picture is shown at (pixel aspect ratio applied), from the last frame's format;
+    /// zero until a frame arrives. Subtitles are placed in this rectangle.
+    var displaySize: CGSize {
+        enabledLock.lock(); defer { enabledLock.unlock() }; return _displaySize
+    }
     /// Frames arrive on the engine's presenter thread; while disabled they're dropped.
     var isEnabled: Bool {
         get { enabledLock.lock(); defer { enabledLock.unlock() }; return _enabled }
@@ -26,6 +32,10 @@ final class VideoSink: @unchecked Sendable {
         if format == nil || !CMVideoFormatDescriptionMatchesImageBuffer(format!, imageBuffer: pb) {
             format = nil
             CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: pb, formatDescriptionOut: &format)
+            if let format {
+                let d = CMVideoFormatDescriptionGetPresentationDimensions(format, usePixelAspectRatio: true, useCleanAperture: false)
+                enabledLock.lock(); _displaySize = d; enabledLock.unlock()
+            }
         }
         guard let format else { return }
         var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
@@ -46,6 +56,7 @@ final class VideoSink: @unchecked Sendable {
     func clear() {
         layer.sampleBufferRenderer.flush(removingDisplayedImage: true, completionHandler: nil)
         format = nil
+        enabledLock.lock(); _displaySize = .zero; enabledLock.unlock()
     }
 }
 

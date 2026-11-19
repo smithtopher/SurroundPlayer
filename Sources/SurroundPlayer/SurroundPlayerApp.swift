@@ -31,6 +31,12 @@ struct SurroundPlayerApp: App {
                     Button("Clear Menu") { model.clearRecents() }
                         .disabled(model.recentURLs.isEmpty)
                 }
+                Divider()
+                Button("Load Playlist…") { model.showLoadPlaylistPanel() }
+                    .keyboardShortcut("l")
+                Button("Save Playlist…") { model.showSavePlaylistPanel() }
+                    .keyboardShortcut("s")
+                    .disabled(model.playlist.isEmpty)
             }
             CommandMenu("Playback") {
                 // Single keys (Space, arrows, F, V, [, ], L) are handled by the player
@@ -46,6 +52,10 @@ struct SurroundPlayerApp: App {
                 Divider()
                 Button("Next Audio Track  (A)") { model.cycleAudioTrack() }
                     .disabled(model.audioTracks.count < 2)
+                Button("Next Subtitle Track  (S)") { model.cycleSubtitleTrack() }
+                    .disabled(model.subtitleTracks.isEmpty)
+                Button("Load Subtitle File…") { model.showSubtitleOpenPanel() }
+                    .disabled(!model.hasVideo)
                 Divider()
                 Button("Stop") { model.stop() }
                     .keyboardShortcut(".", modifiers: .command)

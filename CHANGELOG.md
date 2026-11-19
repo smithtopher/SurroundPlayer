@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.2.7] — 2026-11-19 (macOS)
+
+The Mac app catches up with Windows 1.2.3–1.2.7.
+
+### macOS
+- **Subtitles** (embedded text and PGS/DVD/DVB bitmaps, and subtitle files), drawn over the video.
+  - **CC menu** in the controls bar (Off, tracks, Load Subtitle File…). **S** cycles tracks.
+  - `.srt`/`.ass`/`.ssa`/`.vtt` files named like the video are added automatically, and
+    non-UTF-8 files are converted.
+  - A track the file marks as default is shown until you choose otherwise. The language you
+    pick is used for the next videos, and forced tracks are shown when nothing else is.
+  - Bitmap subtitles are placed by the picture's displayed size, so they also land correctly
+    on anamorphic video.
+- **The playlist is restored at launch** (exact cue tracks, the current track and its position).
+  Play resumes where it was.
+- **Playlist files:**
+  - File ▸ Save Playlist… (**⌘S**) writes an `.m3u8` with relative paths.
+  - File ▸ Load Playlist… (**⌘L**) replaces the playlist.
+  - Load…/Save… are also under the playlist.
+  - Opening or dropping `.m3u`/`.m3u8` adds their entries, including lists written on Windows.
+- The controls bar shows the **source format** ("24-bit / 96 kHz") next to the output badge. When
+  space is short it drops labels rather than buttons.
+
 ## [1.2.7] — 2026-11-19 (Windows)
 
 ### Windows

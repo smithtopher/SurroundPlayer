@@ -106,6 +106,7 @@ struct ContentView: View {
                 VisualizerStage(renderer: r)        // overrides the video track when enabled
             } else if model.hasVideo {
                 VideoView(sink: model.sink)
+                SubtitleOverlay()
             } else {
                 NowPlayingArt()
                     .onTapGesture(count: 2) { model.toggleFullScreen() }
@@ -216,26 +217,13 @@ struct ControlsBar: View {
                 }
                 Button { model.next() } label: { Image(systemName: "forward.fill") }
 
-                HStack(spacing: 8) {
-                    if model.audioTracks.count > 1 {
-                        Menu {
-                            ForEach(Array(model.audioTracks.enumerated()), id: \.offset) { i, name in
-                                Button { model.selectAudioTrack(i) } label: {
-                                    if i == model.currentAudioTrack { Label(name, systemImage: "checkmark") } else { Text(name) }
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "waveform")
-                                Text(model.currentAudioTrackLabel).font(.caption).lineLimit(1).truncationMode(.tail)
-                                    .frame(maxWidth: 220, alignment: .leading)
-                            }
-                        }
-                            .menuStyle(.borderlessButton)
-                            .fixedSize()
-                            .help("Audio track (A: next track)")
-                    }
-                    OutputBadge()
+                // when space is short, drop labels (audio track name, subtitle language, source
+                // format) rather than clip the buttons; the menus and tooltips keep full names
+                ViewThatFits(in: .horizontal) {
+                    rightControls(audioLabel: true, subLabel: true, format: true)
+                    rightControls(audioLabel: false, subLabel: true, format: true)
+                    rightControls(audioLabel: false, subLabel: false, format: true)
+                    rightControls(audioLabel: false, subLabel: false, format: false)
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
@@ -244,6 +232,59 @@ struct ControlsBar: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(.bar)
+    }
+
+    @ViewBuilder
+    private func rightControls(audioLabel: Bool, subLabel: Bool, format: Bool) -> some View {
+        HStack(spacing: 8) {
+            if model.hasVideo {
+                Menu {
+                    Button { model.selectSubtitleTrack(-1) } label: {
+                        if model.currentSubtitleTrack < 0 { Label("Off", systemImage: "checkmark") } else { Text("Off") }
+                    }
+                    ForEach(Array(model.subtitleTracks.enumerated()), id: \.offset) { i, name in
+                        Button { model.selectSubtitleTrack(i) } label: {
+                            if i == model.currentSubtitleTrack { Label(name, systemImage: "checkmark") } else { Text(name) }
+                        }
+                    }
+                    Divider()
+                    Button("Load Subtitle File…") { model.showSubtitleOpenPanel() }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: model.currentSubtitleTrack >= 0 ? "captions.bubble.fill" : "captions.bubble")
+                        if subLabel { Text(model.subtitleShortLabel).font(.caption).lineLimit(1) }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Subtitles: \(model.subtitleTracks.indices.contains(model.currentSubtitleTrack) ? model.subtitleTracks[model.currentSubtitleTrack] : "off") (S: next)")
+            }
+            if model.audioTracks.count > 1 {
+                Menu {
+                    ForEach(Array(model.audioTracks.enumerated()), id: \.offset) { i, name in
+                        Button { model.selectAudioTrack(i) } label: {
+                            if i == model.currentAudioTrack { Label(name, systemImage: "checkmark") } else { Text(name) }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "waveform")
+                        if audioLabel {
+                            Text(model.currentAudioTrackLabel).font(.caption).lineLimit(1).truncationMode(.tail)
+                                .frame(maxWidth: 150, alignment: .leading)
+                        }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Audio track: \(model.currentAudioTrackLabel) (A: next track)")
+            }
+            if format && !model.sourceFormat.isEmpty {
+                Text(model.sourceFormat).font(.caption).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                    .help("Source sample rate and bit depth")
+            }
+            OutputBadge()
+        }
     }
 }
 
@@ -373,6 +414,11 @@ struct PlaylistView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button("Load…") { model.showLoadPlaylistPanel() }.buttonStyle(.borderless).font(.caption)
+                    .help("Replace the playlist with an .m3u/.m3u8 file (⌘L)")
+                Button("Save…") { model.showSavePlaylistPanel() }.buttonStyle(.borderless).font(.caption)
+                    .disabled(model.playlist.isEmpty)
+                    .help("Save the playlist as an .m3u8 file (⌘S)")
                 Button("Clear") { model.clearPlaylist() }.buttonStyle(.borderless).font(.caption)
                     .disabled(model.playlist.isEmpty)
             }
@@ -430,4 +476,50 @@ func timeString(_ t: Double) -> String {
     guard t.isFinite, t > 0 else { return "0:00" }
     let s = Int(t.rounded(.down))
     return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
+}
+
+/// Subtitles over the video's letterboxed rectangle: text centred near the bottom of the
+/// picture, bitmaps (PGS/DVD/DVB) placed where the disc puts them.
+struct SubtitleOverlay: View {
+    @EnvironmentObject var model: PlayerModel
+
+    var body: some View {
+        GeometryReader { geo in
+            let r = videoRect(in: geo.size)
+            let f = model.subtitleFrame
+            ZStack(alignment: .topLeading) {
+                if f.kind == .bitmap, let img = f.image, f.refW > 0, f.refH > 0 {
+                    let sx = r.width / CGFloat(f.refW), sy = r.height / CGFloat(f.refH)
+                    Image(decorative: img, scale: 1)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: CGFloat(f.w) * sx, height: CGFloat(f.h) * sy)
+                        .offset(x: r.minX + CGFloat(f.x) * sx, y: r.minY + CGFloat(f.y) * sy)
+                }
+                if f.kind == .text, !f.text.isEmpty {
+                    Text(f.text)
+                        .font(.system(size: min(max(r.height * 0.05, 14), 72), weight: .semibold))
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 14).padding(.vertical, 4)
+                        .background(Color.black.opacity(0.63), in: RoundedRectangle(cornerRadius: 6))
+                        .frame(maxWidth: max(100, r.width * 0.9))
+                        .padding(.bottom, max(0, geo.size.height - r.maxY) + r.height * 0.06)
+                        .frame(width: geo.size.width, height: geo.size.height, alignment: .bottom)
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+        }
+        .allowsHitTesting(false)
+    }
+
+    /// Where the picture is drawn (aspect fit), from its displayed size.
+    private func videoRect(in size: CGSize) -> CGRect {
+        let d = model.videoDisplaySize
+        let vw = d.width > 0 ? d.width : CGFloat(model.videoWidth)
+        let vh = d.height > 0 ? d.height : CGFloat(model.videoHeight)
+        guard vw > 0, vh > 0, size.width > 0, size.height > 0 else { return CGRect(origin: .zero, size: size) }
+        let s = min(size.width / vw, size.height / vh)
+        return CGRect(x: (size.width - vw * s) / 2, y: (size.height - vh * s) / 2, width: vw * s, height: vh * s)
+    }
 }

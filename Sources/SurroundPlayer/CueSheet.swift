@@ -2,7 +2,7 @@
 // Same rules as the Windows app's CueSheet.cs. No UI or engine dependencies.
 import Foundation
 
-struct CueTrack: Hashable, Sendable {
+struct CueTrack: Hashable, Sendable, Codable {
     let audioURL: URL       // resolved, existing file
     let number: Int
     let title: String
@@ -10,13 +10,14 @@ struct CueTrack: Hashable, Sendable {
     let album: String
     let start: Double       // seconds into audioURL (INDEX 01)
     let end: Double?        // seconds; nil = to the end of the file
+    var cueURL: URL?        // the sheet it came from (playlist files write the sheet)
 }
 
 enum CueSheet {
     /// Parses `cueURL` and returns its audio tracks whose files exist. An unreadable or
     /// empty sheet gives an empty list.
     static func load(_ cueURL: URL, mediaExtensions: Set<String>) -> [CueTrack] {
-        guard let data = try? Data(contentsOf: cueURL), let text = decode(data) else { return [] }
+        guard let text = readText(cueURL) else { return [] }
         return parse(text, cueURL: cueURL, mediaExtensions: mediaExtensions)
     }
 
@@ -86,7 +87,7 @@ enum CueSheet {
             result.append(CueTrack(audioURL: url, number: r.number,
                                    title: r.title.isEmpty ? String(format: "Track %02d", r.number) : r.title,
                                    performer: r.performer.isEmpty ? albumPerformer : r.performer,
-                                   album: album, start: start, end: end))
+                                   album: album, start: start, end: end, cueURL: cueURL))
         }
         return result
     }
@@ -137,7 +138,13 @@ enum CueSheet {
 
     /// UTF-16 with a BOM, UTF-8 (with or without BOM) if it decodes cleanly, else
     /// Windows-1252, which older (Windows) rippers wrote.
-    private static func decode(_ d: Data) -> String? {
+    /// A text file in whatever encoding rippers and subtitle tools wrote (see decode).
+    static func readText(_ url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return decode(data)
+    }
+
+    static func decode(_ d: Data) -> String? {
         let b = [UInt8](d.prefix(3))
         if b.count >= 2, b[0] == 0xFF, b[1] == 0xFE { return String(data: d.dropFirst(2), encoding: .utf16LittleEndian) }
         if b.count >= 2, b[0] == 0xFE, b[1] == 0xFF { return String(data: d.dropFirst(2), encoding: .utf16BigEndian) }
