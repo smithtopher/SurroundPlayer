@@ -1,11 +1,5 @@
 # Changelog
 
-All notable changes to Surround Player, reconstructed from the git history (commit hashes in
-brackets). macOS and Windows share the C engine. Since 1.2.1 they share version numbers too.
-Before that the Mac app stayed at 1.0 while the Windows app went 1.0.0 → 1.2.0.
-
-Windows release builds (single self-contained `.exe`) are on the `releases` branch.
-
 ## [1.2.1] — 2026-11-19
 
 ### macOS
