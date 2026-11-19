@@ -5,6 +5,8 @@ HDMI TV as a **Dolby Digital (AC3) or DTS bitstream**, so the TV can forward it 
 optical (S/PDIF) to a surround amp. Optical can't carry multichannel PCM, so surround has
 to arrive compressed. The approach is modelled on Kodi's WASAPI-exclusive passthrough.
 
+Download pre-compiled releases [here](https://github.com/smithtopher/SurroundPlayer/tree/releases).
+
 Both apps share one C engine (`Sources/PlayerCore`, FFmpeg-based) with a native back-end
 and front-end per OS:
 
