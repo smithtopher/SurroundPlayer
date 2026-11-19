@@ -173,6 +173,9 @@
                                         <MenuFlyout x:Name="AudioTrackMenu" Opening="AudioTrackMenu_Opening" />
                                     </DropDownButton.Flyout>
                                 </DropDownButton>
+                                <TextBlock x:Name="SourceFormatText" FontSize="12" VerticalAlignment="Center"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           ToolTipService.ToolTip="Source sample rate and bit depth" />
                                 <Button x:Name="OutputBadge" IsTabStop="False" Padding="6,3" MinWidth="0" MinHeight="0"
                                         CornerRadius="4" BorderThickness="0" Visibility="Collapsed">
                                     <TextBlock x:Name="OutputBadgeText" FontSize="10" FontWeight="Bold" />

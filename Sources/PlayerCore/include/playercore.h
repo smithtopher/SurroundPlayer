@@ -67,6 +67,9 @@ typedef struct {
     int mode;                   // PCOutputMode
     char bitstream_codec[32];   // "Dolby Digital" / "DTS" when bitstreaming
     int video_width, video_height;
+    int source_rate;            // Hz of the playing audio track; 0 if none
+    int source_bits;            // bits per sample of the source (PCM, lossless, or what a DTS/
+                                // MLP header declares); 0 for lossy formats that have none
 } PCInfo;
 
 typedef struct {

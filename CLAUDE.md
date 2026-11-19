@@ -210,6 +210,11 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
     **Not yet tried on a real HDMI device:** `pctest play <silent 5.1 file> --mc-pcm --device <uid>`.
 - **Audio tracks:** `PCConfig.audio_track`. Both apps: labelled track menu in the
   controls bar (shown when a file has >1 track) and the A key cycles. pcdump has `--track N`.
+- **Source format:** `PCInfo.source_rate` / `source_bits` (`audio_stream_bits`:
+  `bits_per_raw_sample`, else the sample size of lossless/PCM codecs, else 0 = lossy). The
+  source description ends ", 24-bit". Windows shows "24-bit / 96 kHz" beside the output badge
+  (`PlayerModel.SourceFormat`); the Mac UI doesn't use the fields yet. PCInfo grew at the end:
+  `Native.cs` mirrors it.
 - **Bursts:** AC3 is 6144 bytes, DTS (512-sample frames) is 2048. Writes to the ring are
   always whole bursts. The IOProc only switches between real data and **encoded silence
   bursts** on burst boundaries (keep-alive while paused/seeking/between tracks).

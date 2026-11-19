@@ -170,6 +170,16 @@ public sealed class PlayerModel : Observable
     public string Artist { get => _artist; private set => Set(ref _artist, value); }
     public string Album { get => _album; private set => Set(ref _album, value); }
     public string SourceAudio { get => _sourceAudio; private set => Set(ref _sourceAudio, value); }
+    private string _sourceFormat = "";
+    /// Short source format for the controls bar, e.g. "24-bit / 96 kHz" or "44.1 kHz" (lossy).
+    public string SourceFormat { get => _sourceFormat; private set => Set(ref _sourceFormat, value); }
+
+    public static string FormatRate(int rate, int bits)
+    {
+        if (rate <= 0) return "";
+        string khz = (rate / 1000.0).ToString(rate % 1000 == 0 ? "0" : "0.#", CultureInfo.InvariantCulture) + " kHz";
+        return bits > 0 ? $"{bits}-bit / {khz}" : khz;
+    }
     public string OutputDescription { get => _outputDescription; private set => Set(ref _outputDescription, value); }
     public string VideoDescription { get => _videoDescription; private set => Set(ref _videoDescription, value); }
     private int _outputMode = -1;
@@ -684,7 +694,7 @@ public sealed class PlayerModel : Observable
 
     private void ClearInfo()
     {
-        Title = Artist = Album = SourceAudio = OutputDescription = VideoDescription = BitstreamCodecName = "";
+        Title = Artist = Album = SourceAudio = SourceFormat = OutputDescription = VideoDescription = BitstreamCodecName = "";
         OutputMode = -1;
         HasVideo = false;
         Artwork = null;
@@ -745,6 +755,7 @@ public sealed class PlayerModel : Observable
         Artist = Native.Str(info.artist, 256);
         Album = Native.Str(info.album, 256);
         SourceAudio = Native.Str(info.source_audio, 256);
+        SourceFormat = FormatRate(info.source_rate, info.source_bits);
         OutputDescription = Native.Str(info.output, 512);
         VideoDescription = Native.Str(info.video, 256);
         OutputMode = info.mode;

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.3] — 2026-11-19 (Windows)
+
+### Engine
+- `PCInfo.source_rate` / `source_bits`: the playing track's sample rate and bit depth (0 bits for
+  lossy formats). The source description and track names end in ", 24-bit" etc.
+
+### Windows
+- The controls bar shows the source format next to the output badge, e.g. "24-bit / 96 kHz", or
+  just "48 kHz" for lossy formats.
+
 ## [1.2.2] — 2026-11-19 (Windows)
 
 ### Windows

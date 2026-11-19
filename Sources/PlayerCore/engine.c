@@ -960,12 +960,26 @@ static const char *meta(AVDictionary *d, const char *k) {
     return e ? e->value : NULL;
 }
 
+/// Source bit depth: what the stream declares (FLAC, ALAC, WavPack, DTS, TrueHD...), else the
+/// sample size of a lossless/PCM codec. 0 for lossy codecs, where it has no meaning.
+static int audio_stream_bits(const AVCodecParameters *c) {
+    if (c->bits_per_raw_sample > 0) return c->bits_per_raw_sample;
+    const AVCodecDescriptor *d = avcodec_descriptor_get(c->codec_id);
+    if (!d || !(d->props & AV_CODEC_PROP_LOSSLESS)) return 0;
+    int b = av_get_exact_bits_per_sample(c->codec_id);
+    if (b <= 0) b = c->bits_per_coded_sample;
+    return b >= 8 ? b : 0;
+}
+
 static void describe_audio_stream(AVStream *st, char *buf, int len) {
     char layout[64] = "";
     av_channel_layout_describe(&st->codecpar->ch_layout, layout, sizeof(layout));
     const char *profile = avcodec_profile_name(st->codecpar->codec_id, st->codecpar->profile);
-    snprintf(buf, len, "%s%s%s %s %d Hz", avcodec_get_name(st->codecpar->codec_id),
-             profile ? " " : "", profile ? profile : "", layout, st->codecpar->sample_rate);
+    int bits = audio_stream_bits(st->codecpar);
+    char depth[16] = "";
+    if (bits > 0) snprintf(depth, sizeof(depth), ", %d-bit", bits);
+    snprintf(buf, len, "%s%s%s %s %d Hz%s", avcodec_get_name(st->codecpar->codec_id),
+             profile ? " " : "", profile ? profile : "", layout, st->codecpar->sample_rate, depth);
 }
 
 static int open_decoder(AVStream *st, AVCodecContext **out, PCVideoBackend *vb) {
@@ -1155,6 +1169,8 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
     }
     p->info.mode = mode;
     describe_audio_stream(st, p->info.source_audio, sizeof(p->info.source_audio));
+    p->info.source_rate = st->codecpar->sample_rate;
+    p->info.source_bits = audio_stream_bits(st->codecpar);
     return 0;
 }
 

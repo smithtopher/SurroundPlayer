@@ -215,6 +215,8 @@ public sealed partial class MainWindow : Window
                                         : (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
         ToolTipService.SetToolTip(OutputBadge, Model.OutputDescription);
         DetailSource.Text = Model.SourceAudio;
+        SourceFormatText.Text = Model.SourceFormat;
+        SourceFormatText.Visibility = Model.SourceFormat.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         DetailOutput.Text = Model.OutputDescription;
         DetailVideo.Text = Model.VideoDescription;
         DetailVideoPanel.Visibility = Model.HasVideo ? Visibility.Visible : Visibility.Collapsed;

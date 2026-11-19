@@ -46,6 +46,7 @@ internal static unsafe class Native
         public int mode;
         public fixed byte bitstream_codec[32];
         public int video_width, video_height;
+        public int source_rate, source_bits;
     }
 
     [StructLayout(LayoutKind.Sequential)]
