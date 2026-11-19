@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.2.8] — 2026-11-19 (Windows)
 
 ### Windows
 - **Drag and drop of folders and several files** reads the dropped list itself (`FileDrop`)
