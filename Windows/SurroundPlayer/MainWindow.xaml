@@ -248,8 +248,13 @@
                         <ProgressRing x:Name="ScanRing" Width="14" Height="14" IsActive="False" Visibility="Collapsed" />
                         <TextBlock x:Name="CountText" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
-                    <HyperlinkButton x:Name="ClearButton" Content="Clear" FontSize="12" HorizontalAlignment="Right" Padding="4,0"
-                                     Click="Clear_Click" IsTabStop="False" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="4">
+                        <HyperlinkButton x:Name="SavePlaylistButton" Content="Save…" FontSize="12" Padding="4,0"
+                                         Click="SavePlaylist_Click" IsTabStop="False"
+                                         ToolTipService.ToolTip="Save the playlist as an .m3u8 file (Ctrl+S)" />
+                        <HyperlinkButton x:Name="ClearButton" Content="Clear" FontSize="12" Padding="4,0"
+                                         Click="Clear_Click" IsTabStop="False" />
+                    </StackPanel>
                 </Grid>
             </Grid>
         </Grid>

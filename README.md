@@ -37,6 +37,7 @@ Keys (in the player window, not while typing in the filter):
 | ⌘← ⌘→ | Ctrl+← Ctrl+→ | previous / next track |
 | ⌘O / ⌘F / ⌘, | Ctrl+O / Ctrl+F / Ctrl+, | open / search / settings |
 | File ▸ Open Recent | Ctrl+R (or the history button) | recently opened files, folders and cue sheets |
+| | Ctrl+S (or Save… under the playlist) | save the playlist as `.m3u8` |
 | F (or double-click) | F (or double-click) | full-screen player; Esc leaves |
 | V | V | visualiser on/off |
 | ] / [ | ] / [ (or N / P) | next / previous visualiser preset |
@@ -57,6 +58,7 @@ picture, and they and the cursor fade out after 3 s without mouse movement.
 | Folder art (`cover.jpg`, `folder.png`… next to the file) | ✓ | ✓ |
 | `.cue` sheets (one big file split into tracks) | ✓ | ✓ |
 | Open Recent (last 10 files, folders, cue sheets) | ✓ | ✓ |
+| Playlist restored at launch; save/open `.m3u8` playlists | — | ✓ |
 | Visualiser | ✓ | ✓ |
 
 **Artwork:** when the visualiser is off and the file has no video, the stage shows the

@@ -16,7 +16,8 @@ public sealed record CueTrack(
     string Performer,
     string Album,
     double Start,       // seconds into AudioPath (INDEX 01)
-    double? End);       // seconds; null = to the end of the file
+    double? End,        // seconds; null = to the end of the file
+    string CuePath = "");  // the sheet it came from
 
 public static class CueSheet
 {
@@ -112,7 +113,7 @@ public static class CueSheet
             result.Add(new CueTrack(path, r.Number,
                 r.Title.Length > 0 ? r.Title : $"Track {r.Number:00}",
                 r.Performer.Length > 0 ? r.Performer : albumPerformer,
-                album, r.Index1!.Value, end));
+                album, r.Index1!.Value, end, cuePath));
         }
         return result;
     }
@@ -176,7 +177,7 @@ public static class CueSheet
 
     /// UTF-8 (with or without BOM) if it decodes cleanly, else the system ANSI code page
     /// (Windows-1252 on Western systems), which older rippers wrote.
-    private static string ReadText(string path)
+    internal static string ReadText(string path)
     {
         var bytes = File.ReadAllBytes(path);
         if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);

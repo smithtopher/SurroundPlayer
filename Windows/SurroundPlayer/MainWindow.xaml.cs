@@ -383,6 +383,16 @@ public sealed partial class MainWindow : Window
     private void Stage_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e) => ToggleFullScreen();
     private void Clear_Click(object sender, RoutedEventArgs e) => Model.ClearPlaylist();
 
+    private async void SavePlaylist_Click(object sender, RoutedEventArgs e)
+    {
+        if (Model.Playlist.Count == 0) return;
+        var picker = new FileSavePicker { SuggestedFileName = "Playlist" };
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+        picker.FileTypeChoices.Add("Playlist", new List<string> { ".m3u8" });
+        var file = await picker.PickSaveFileAsync();
+        if (file != null) Model.SavePlaylist(file.Path);
+    }
+
     private void PlaylistToggle_Click(object sender, RoutedEventArgs e) => UpdatePlaylistVisibility();
 
     private void UpdatePlaylistVisibility()
@@ -420,6 +430,7 @@ public sealed partial class MainWindow : Window
         {
             string glyph = Directory.Exists(path) ? ""                                   // Folder
                 : PlayerModel.IsCue(path) ? ""                                          // Document
+                : PlaylistFile.IsPlaylist(path) ? ""                                    // BulletedList
                 : "";                                                                   // Audio
             var item = new MenuFlyoutItem { Text = Model.RecentTitle(path), Icon = new FontIcon { Glyph = glyph } };
             ToolTipService.SetToolTip(item, path);
@@ -491,6 +502,7 @@ public sealed partial class MainWindow : Window
         ScanRing.Visibility = Model.IsScanning ? Visibility.Visible : Visibility.Collapsed;
         CountText.Text = Model.IsScanning ? "Scanning…" : _filtered != null ? $"{_filtered.Count} of {n} items" : $"{n} items";
         ClearButton.IsEnabled = n > 0;
+        SavePlaylistButton.IsEnabled = n > 0;
         bool empty = n == 0 || (_filtered != null && _filtered.Count == 0);
         EmptyPlaylist.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         EmptyText.Text = n == 0 ? "Drop files or folders here" : "No matches";
@@ -578,6 +590,7 @@ public sealed partial class MainWindow : Window
         bool alt = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Menu).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
         if (ctrl && e.Key == VirtualKey.F) { SearchBox.Focus(FocusState.Keyboard); e.Handled = true; return; }
         if (ctrl && e.Key == VirtualKey.O) { Open_Click(this, new RoutedEventArgs()); e.Handled = true; return; }
+        if (ctrl && e.Key == VirtualKey.S) { SavePlaylist_Click(this, new RoutedEventArgs()); e.Handled = true; return; }
         if (ctrl && e.Key == VirtualKey.R) { RecentButton.Flyout.ShowAt(RecentButton); e.Handled = true; return; }
         if (ctrl && (int)e.Key == 188) { Settings_Click(this, new RoutedEventArgs()); e.Handled = true; return; }   // Ctrl+,
         var focused = FocusManager.GetFocusedElement(Root.XamlRoot);

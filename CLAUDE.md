@@ -72,9 +72,16 @@ docs; this file is the context for continuing development.
       cover/folder/front > first alphabetically). Shown when the visualiser is off and there's
       no video. The Mac app does the same (`FolderArt.swift`, since 2026-11-19).
     - **Not done on Windows:** cursor auto-hide only via ShowCursor, HDR (PQ) tone mapping,
-      playlist persistence (not on Mac either).
+      (playlist persistence is Windows-only: see below).
     - Shortcuts: Mac ⌘ → Ctrl (Ctrl+←/→ prev/next, Ctrl+F search, Ctrl+O open, Ctrl+, settings).
       Ctrl+R opens the Open Recent menu (Windows only; no menu bar there).
+    - **Playlist persistence (Windows 1.2.4):** `PlaylistFile.cs`. Session in
+      `%LOCALAPPDATA%\SurroundPlayer\playlist.json` (tracks with their full `CueTrack`, current
+      index, track-relative position), written 2 s after a change (`ScheduleSave`) and in
+      `Shutdown`; restored in the model constructor (missing files dropped; current selected,
+      not opened; `TogglePlay` resumes at `_resumeAt`). `.m3u/.m3u8`: `Expand` replaces a playlist
+      by its entries (nested playlists and URLs skipped); Save… / Ctrl+S writes UTF-8 `.m3u8` with
+      relative paths, cue tracks as their sheet (`CueTrack.CuePath`).
     - **Open Recent (Windows, 2026-11-19):** a history button (DropDownButton) next to the
       folder button, same rules as the Mac menu (see `recentFiles` below), in
       `PlayerModel.NoteRecent/OpenRecent/RecentTitle`, menu built in `RecentMenu_Opening`.
@@ -315,7 +322,7 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
     `pcdump`.
 - **Untested:** DTS-HD sources (no encoder to make test files), and audible playback through
   the amp.
-- **Not implemented:** subtitles, gapless playback (except between cue tracks of one file), persisting the playlist across launches,
+- **Not implemented:** subtitles, gapless playback (except between cue tracks of one file), persisting the playlist across launches on Mac,
   E-AC3/TrueHD/DTS-HD bitstreaming over HDMI direct to an AVR (the user's chain is optical,
   so AC3/DTS core is the ceiling), and notarization.
 - A clock stall after a seek happened once on the very first bitstream run (when the TV

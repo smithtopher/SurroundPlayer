@@ -138,6 +138,61 @@ public sealed class PlayerModel : Observable
         _timer.Interval = TimeSpan.FromMilliseconds(200);
         _timer.Tick += (_, _) => Tick();
         _timer.Start();
+        _saveTimer = ui.CreateTimer();
+        _saveTimer.Interval = TimeSpan.FromSeconds(2);
+        _saveTimer.IsRepeating = false;
+        _saveTimer.Tick += (_, _) => SaveSession();
+        RestoreSession();
+        Playlist.CollectionChanged += (_, _) => ScheduleSave();
+    }
+
+    // ------------------------------------------------------------------ playlist persistence
+
+    private readonly DispatcherQueueTimer _saveTimer;
+    private Track? _resumeTrack;     // restored current track: play resumes at _resumeAt
+    private double _resumeAt;
+
+    /// Saves the session a couple of seconds after the last change (and at exit), so a
+    /// crash or kill loses little.
+    private void ScheduleSave() { _saveTimer.Stop(); _saveTimer.Start(); }
+
+    private void SaveSession()
+    {
+        double pos = _isOpen ? Position : (Current != null && Current == _resumeTrack ? _resumeAt : 0);
+        PlaylistFile.SaveSession(Playlist, Current, pos);
+    }
+
+    /// Brings back the last session's playlist (entries whose files are gone are dropped),
+    /// with the current track selected but not playing.
+    private void RestoreSession()
+    {
+        var s = PlaylistFile.LoadSession();
+        if (s?.Tracks == null) return;
+        Track? current = null;
+        for (int i = 0; i < s.Tracks.Count; i++)
+        {
+            var e = s.Tracks[i];
+            if (string.IsNullOrEmpty(e.Path) || !File.Exists(e.Path)) continue;
+            var t = e.Cue != null ? new Track(e.Cue) : new Track(e.Path);
+            Playlist.Add(t);
+            if (i == s.Current) current = t;
+        }
+        DebugTrace.Log($"model: restored {Playlist.Count} of {s.Tracks.Count} playlist items");
+        if (current == null) return;
+        Current = current;
+        _resumeTrack = current;
+        _resumeAt = Math.Max(0, s.Position);
+        // show what Play will resume (the duration is only known once the file is opened)
+        Title = current.Cue?.Title ?? current.Name;
+        Artist = current.Cue?.Performer ?? "";
+        Album = current.Cue?.Album ?? "";
+    }
+
+    /// Saves the playlist as an .m3u8 file.
+    public void SavePlaylist(string path)
+    {
+        try { PlaylistFile.WriteM3u(path, Playlist); }
+        catch (Exception ex) { ErrorMessage = $"Could not save the playlist: {ex.Message}"; }
     }
 
     // ------------------------------------------------------------------ state
@@ -366,8 +421,16 @@ public sealed class PlayerModel : Observable
     /// files it covers aren't listed again on their own.
     public static List<Track> Expand(IEnumerable<string> paths)
     {
-        var files = new List<string>();
+        // a playlist file stands for its entries (files, cue sheets or folders), in place
+        var input = new List<string>();
         foreach (var p in paths)
+        {
+            if (PlaylistFile.IsPlaylist(p) && File.Exists(p)) input.AddRange(PlaylistFile.ReadM3u(p));
+            else input.Add(p);
+        }
+
+        var files = new List<string>();
+        foreach (var p in input)
         {
             if (Directory.Exists(p))
             {
@@ -490,6 +553,8 @@ public sealed class PlayerModel : Observable
         Interlocked.Increment(ref _generation);
         if (Current != track) Renderer?.Clear();
         ErrorMessage = null;
+        _resumeTrack = null;
+        ScheduleSave();
 
         var cfg = new Native.PCConfig
         {
@@ -538,11 +603,12 @@ public sealed class PlayerModel : Observable
         if (!_isOpen)
         {
             var t = Current ?? Playlist.FirstOrDefault();
-            if (t != null) Play(t, _reopenPending ? Position : 0);
+            if (t != null) Play(t, _reopenPending ? Position : t == _resumeTrack ? _resumeAt : 0);
             return;
         }
         IsPlaying = !IsPlaying;
         Native.pc_player_set_paused(_player, IsPlaying ? 0 : 1);
+        ScheduleSave();
     }
 
     public void Stop()
@@ -623,6 +689,8 @@ public sealed class PlayerModel : Observable
     public void Shutdown()
     {
         _timer.Stop();
+        _saveTimer.Stop();
+        SaveSession();
         Native.pc_set_device_change_callback(null, IntPtr.Zero);
         Native.pc_player_close(_player);
         Native.SetThreadExecutionState(Native.ES_CONTINUOUS);

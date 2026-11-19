@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.4] — 2026-11-19 (Windows)
+
+### Windows
+- **The playlist is restored at launch:** saved to `%LOCALAPPDATA%\SurroundPlayer\playlist.json`
+  (shortly after each change and at exit), including exact cue sheet tracks, the current track
+  and its position. The current track is selected but not playing; Play resumes where it was.
+  Entries whose files are gone are dropped.
+- **Playlist files:** **Save…** under the playlist (or **Ctrl+S**) writes an `.m3u8` with paths
+  relative to its folder; cue sheet tracks are written as their sheet. Opening or dropping an
+  `.m3u`/`.m3u8` adds its entries, and it shows in Open Recent.
+
 ## [1.2.3] — 2026-11-19 (Windows)
 
 ### Engine
