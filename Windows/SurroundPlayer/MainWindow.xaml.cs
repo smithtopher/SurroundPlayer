@@ -702,7 +702,8 @@ public sealed partial class MainWindow : Window
 
     private void Root_DragOver(object sender, DragEventArgs e)
     {
-        if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
+        if (!IsFileDrag(e.DataView)) return;
+        if (DropHighlight.Visibility != Visibility.Visible) DebugTrace.Log("drag over: files");
         e.AcceptedOperation = DataPackageOperation.Copy;
         e.DragUIOverride.Caption = "Add to playlist";
         DropHighlight.Visibility = Visibility.Visible;
@@ -711,11 +712,60 @@ public sealed partial class MainWindow : Window
     private async void Root_Drop(object sender, DragEventArgs e)
     {
         DropHighlight.Visibility = Visibility.Collapsed;
-        if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
-        var items = await e.DataView.GetStorageItemsAsync();
-        var paths = items.Select(i => i.Path).Where(p => !string.IsNullOrEmpty(p))
+        if (!IsFileDrag(e.DataView)) return;
+        // the data is read asynchronously: hold the drop open until then
+        var deferral = e.GetDeferral();
+        List<string>? paths = null;
+        try
+        {
+            // The classic file list first. GetStorageItemsAsync, in an unpackaged app, returns only
+            // one item for several files and throws for a folder plus files.
+            paths = await ReadFileDropAsync(e.DataView);
+            if (paths == null && e.DataView.Contains(StandardDataFormats.StorageItems))
+                paths = (await e.DataView.GetStorageItemsAsync()).Select(i => i.Path).ToList();
+            paths = paths?.Where(p => !string.IsNullOrEmpty(p))
                          .OrderBy(p => p, Comparer<string>.Create(Native.StrCmpLogicalW)).ToList();
-        Model.Add(paths, playFirst: !Model.IsPlaying);
+            DebugTrace.Log($"drop: {paths?.Count ?? 0} paths");
+        }
+        catch (Exception ex)
+        {
+            DebugTrace.Log($"drop failed: 0x{ex.HResult:X8} {ex.Message} formats=[{string.Join(", ", e.DataView.AvailableFormats)}]");
+            Model.ErrorMessage = "Could not read the dropped items: " + ex.Message;
+        }
+        finally { deferral.Complete(); }
+        if (paths is { Count: > 0 }) Model.Add(paths, playFirst: !Model.IsPlaying);
+    }
+
+    private static bool IsFileDrag(DataPackageView view) =>
+        view.Contains(StandardDataFormats.StorageItems) || view.AvailableFormats.Contains("FileDrop");
+
+    /// The dropped paths from CF_HDROP ("FileDrop"): a DROPFILES header, then the paths as
+    /// null-terminated strings ending with an empty one. Null when the format isn't there.
+    private static async System.Threading.Tasks.Task<List<string>?> ReadFileDropAsync(DataPackageView view)
+    {
+        if (!view.AvailableFormats.Contains("FileDrop")) return null;
+        var data = await view.GetDataAsync("FileDrop");
+        var stream = data as IRandomAccessStream ?? WinRT.CastExtensions.As<IRandomAccessStream>(data);
+        byte[] bytes;
+        using (var s = stream.AsStreamForRead())
+        using (var ms = new MemoryStream())
+        {
+            await s.CopyToAsync(ms);
+            bytes = ms.ToArray();
+        }
+        if (bytes.Length < 20) return null;
+        int offset = BitConverter.ToInt32(bytes, 0);       // DROPFILES.pFiles
+        bool wide = BitConverter.ToInt32(bytes, 16) != 0;  // DROPFILES.fWide
+        if (offset < 20 || offset >= bytes.Length) return null;
+        string list = wide ? System.Text.Encoding.Unicode.GetString(bytes, offset, bytes.Length - offset)
+                           : System.Text.Encoding.Default.GetString(bytes, offset, bytes.Length - offset);
+        var paths = new List<string>();
+        foreach (var p in list.Split('\0'))
+        {
+            if (p.Length == 0) break;   // the empty string ends the list
+            paths.Add(p);
+        }
+        return paths.Count > 0 ? paths : null;
     }
 
     // ------------------------------------------------------------------ keys

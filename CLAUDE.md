@@ -75,6 +75,11 @@ docs; this file is the context for continuing development.
       (playlist persistence: both apps now, see below).
     - Shortcuts: Mac ⌘ → Ctrl (Ctrl+←/→ prev/next, Ctrl+F search, Ctrl+O open, Ctrl+, settings).
       Ctrl+R opens the Open Recent menu (Windows only; no menu bar there).
+    - **Drag and drop (Windows):** `Root_Drop` reads CF_HDROP ("FileDrop": DROPFILES header +
+      paths) under a drop deferral; `GetStorageItemsAsync` is only a fallback (unpackaged, it can
+      return one item or throw 0x80040064 when "Shell IDList Array" is unreadable). Drops are
+      logged with SURROUND_DEBUG. A WinForms DoDragDrop helper or UIAutomation-driven Explorer
+      drag can test it (synthetic mouse; flaky, retry).
     - **Playlist persistence (Windows 1.2.4):** `PlaylistFile.cs`. Session in
       `%LOCALAPPDATA%\SurroundPlayer\playlist.json` (tracks with their full `CueTrack`, current
       index, track-relative position), written 2 s after a change (`ScheduleSave`) and in
@@ -256,6 +261,9 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
   source description ends ", 24-bit". Windows shows "24-bit / 96 kHz" beside the output badge
   (`PlayerModel.SourceFormat`; Mac: `sourceFormat`, same place). PCInfo grew at the end:
   `Native.cs` mirrors it.
+- **Read-ahead:** `queue_enough` in engine.c: the demuxer reads until each queue holds
+  `READ_AHEAD_SECONDS` (10 s; was 2 s, which let USB-drive stalls pause playback) or
+  `READ_AHEAD_PACKETS` for duration-less packets, capped at 256 MB in total.
 - **Bursts:** AC3 is 6144 bytes, DTS (512-sample frames) is 2048. Writes to the ring are
   always whole bursts. The IOProc only switches between real data and **encoded silence
   bursts** on burst boundaries (keep-alive while paused/seeking/between tracks).

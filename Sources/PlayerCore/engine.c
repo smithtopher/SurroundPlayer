@@ -896,11 +896,17 @@ static void *present_thread(void *arg) {
 // ---------------------------------------------------------------------------
 // demux thread
 
+// How far the demuxer reads ahead of playback (compressed packets in RAM). Slow media (a USB
+// stick waking up or seeking, a network share) can stall reads for a second or more; this
+// much queued data rides over that. Capped by the byte limit in demux_thread.
+#define READ_AHEAD_SECONDS 10.0
+#define READ_AHEAD_PACKETS 250     // for streams whose packets carry no duration
+
 static int queue_enough(PCPlayer *p, PacketQueue *q, int stream) {
     if (stream < 0) return 1;
     pc_mutex_lock(&q->m);
     double dur = q->duration * av_q2d(p->fmt->streams[stream]->time_base);
-    int enough = q->count > 25 && (q->duration == 0 || dur > 2.0);
+    int enough = q->duration == 0 ? q->count > READ_AHEAD_PACKETS : (q->count > 25 && dur > READ_AHEAD_SECONDS);
     pc_mutex_unlock(&q->m);
     return enough;
 }

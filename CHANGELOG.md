@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Windows
+- **Drag and drop of folders and several files** reads the dropped list itself (`FileDrop`)
+  instead of WinUI's storage-item API, which in an unpackaged app can return only one item or
+  fail, and it holds the drop open while reading. A failed drop now says why instead of
+  silently adding nothing.
+
+### Engine
+- **Read-ahead raised from about 2 to 10 seconds** of compressed audio/video, so a slow drive
+  (a USB stick waking up or seeking) no longer stalls playback (the 256 MB cap still applies).
+
 ## [1.2.7] — 2026-11-19 (macOS)
 
 The Mac app catches up with Windows 1.2.3–1.2.7.
