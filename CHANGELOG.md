@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.5] — 2026-11-19 (Windows)
+
+### Engine
+- **Subtitles** (`pc_subtitle.c`, portable): every embedded subtitle stream is decoded as the file
+  is read, so switching tracks is instant. Text formats (SubRip, ASS/SSA, WebVTT, mov_text...)
+  come out as plain text (styling removed); bitmap formats (PGS, DVD, DVB) as BGRA images with
+  their placement. Subtitle files can be added as tracks. Timed like the video (audio latency
+  setting included). New API: `pc_player_subtitle_*`, `pc_player_add_subtitle_file`.
+- `pcdump`/`pctest`: `--sub N` / `--sub-file F` print subtitle changes during playback.
+
+### Windows
+- Subtitles drawn over the video. **CC** button in the controls bar (Off, tracks, Load Subtitle
+  File…) and the **S** key cycles tracks. `.srt`, `.ass`, `.ssa` and `.vtt` files named like the
+  video (`Movie.srt`, `Movie.en.srt`) are added automatically; non-UTF-8 files are converted.
+- Subtitles stay off until you pick a track; the language picked is then used for the next
+  videos. Forced tracks are shown even when subtitles are off.
+
 ## [1.2.4] — 2026-11-19 (Windows)
 
 ### Windows

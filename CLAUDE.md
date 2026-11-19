@@ -217,6 +217,20 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
     **Not yet tried on a real HDMI device:** `pctest play <silent 5.1 file> --mc-pcm --device <uid>`.
 - **Audio tracks:** `PCConfig.audio_track`. Both apps: labelled track menu in the
   controls bar (shown when a file has >1 track) and the A key cycles. pcdump has `--track N`.
+- **Subtitles (engine, 2026-11-19):** `pc_subtitle.c` (portable). Tracks = subtitle streams
+  with a decoder (`subt[]`, each with its own decoder + `PCSubs` store) + files from
+  `pc_player_add_subtitle_file` (loaded whole into their store). Every embedded subtitle stream
+  is decoded by the demux thread as packets arrive (not just the selected one: the demuxer
+  runs seconds ahead, so selecting later would miss cues); stores keep 120 s behind and are
+  cleared on seek. Text: ASS dialogue from FFmpeg -> plain text (override tags stripped,
+  \N -> newline). Bitmaps: PAL8 -> premultiplied BGRA; open-ended events end at the next one.
+  `pc_player_subtitle_state` looks up at `video_clock` (clock - av_offset) and has one serial
+  across track switches. Text files must be UTF-8 (no iconv in our FFmpeg): the Windows app
+  converts others to %TEMP%\SurroundPlayer\subtitles. Bitmap rendering is untested (ffmpeg
+  can't make PGS/DVD test files from text). `pctest play <video> --sub N | --sub-file F`.
+  Windows app: `PlayerModel.Subtitles.cs` (sidecars `Movie[.lang...].srt/.ass/.ssa/.vtt`,
+  `subtitleLanguage` setting: "" off, "*" any, else 2-letter; forced tracks auto), overlay
+  `SubtitleLayer` in `MainWindow` polled every 40 ms, placed over the uniform-fit video rect.
 - **Source format:** `PCInfo.source_rate` / `source_bits` (`audio_stream_bits`:
   `bits_per_raw_sample`, else the sample size of lossless/PCM codecs, else 0 = lossy). The
   source description ends ", 24-bit". Windows shows "24-bit / 96 kHz" beside the output badge
@@ -322,7 +336,7 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
     `pcdump`.
 - **Untested:** DTS-HD sources (no encoder to make test files), and audible playback through
   the amp.
-- **Not implemented:** subtitles, gapless playback (except between cue tracks of one file), persisting the playlist across launches on Mac,
+- **Not implemented:** subtitles in the Mac UI (the engine has them), gapless playback (except between cue tracks of one file), persisting the playlist across launches on Mac,
   E-AC3/TrueHD/DTS-HD bitstreaming over HDMI direct to an AVR (the user's chain is optical,
   so AC3/DTS core is the ceiling), and notarization.
 - A clock stall after a seek happened once on the very first bitstream run (when the TV

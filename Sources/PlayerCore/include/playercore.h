@@ -138,6 +138,36 @@ PC_API int pc_player_audio_track_count(PCPlayer *p);
 PC_API void pc_player_audio_track_name(PCPlayer *p, int index, char *buf, int len);
 PC_API int pc_player_current_audio_track(PCPlayer *p);
 
+// Subtitles. Tracks are the file's subtitle streams (text: SubRip, ASS/SSA, WebVTT, mov_text...;
+// bitmap: PGS, DVD, DVB), then any files added with pc_player_add_subtitle_file. None is shown
+// until one is selected. The selected track is decoded as the file plays, and
+// pc_player_subtitle_state says what belongs on screen now, timed like the video
+// (clock - av_offset). Poll it (e.g. every 50 ms); when `serial` changes, fetch the content.
+enum { PC_SUB_NONE = 0, PC_SUB_TEXT = 1, PC_SUB_BITMAP = 2 };
+typedef struct {
+    int serial;                 // changes whenever what should be shown changes
+    int kind;                   // PC_SUB_*
+    int text_len;               // PC_SUB_TEXT: bytes of UTF-8 (lines separated by '\n')
+    int x, y, w, h;             // PC_SUB_BITMAP: placement on a ref_w x ref_h canvas
+    int ref_w, ref_h;           // (0 = the video's size)
+} PCSubtitleState;
+
+PC_API int pc_player_subtitle_track_count(PCPlayer *p);
+PC_API void pc_player_subtitle_track_name(PCPlayer *p, int index, char *buf, int len);
+// ISO 639-2 language tag of a track ("eng"), or "" if unknown.
+PC_API void pc_player_subtitle_track_language(PCPlayer *p, int index, char *buf, int len);
+PC_API int pc_player_current_subtitle_track(PCPlayer *p);   // -1 = off
+// -1 turns subtitles off. Embedded tracks start with the next subtitle the demuxer reads.
+PC_API void pc_player_set_subtitle_track(PCPlayer *p, int index);
+// Adds a subtitle file (UTF-8 text formats, or any format FFmpeg reads) as a track named
+// `name` (NULL: the file name). Returns its track index, or -1. Call after open.
+PC_API int pc_player_add_subtitle_file(PCPlayer *p, const char *path, const char *name);
+PC_API void pc_player_subtitle_state(PCPlayer *p, PCSubtitleState *st);
+// Copy what pc_player_subtitle_state described; both return the serial of what they copied,
+// which can differ from the state's if it changed in between (fetch again next poll).
+PC_API int pc_player_subtitle_text(PCPlayer *p, char *buf, int len);
+PC_API int pc_player_subtitle_bitmap(PCPlayer *p, uint8_t *bgra, int len);   // premultiplied BGRA, w*h*4
+
 // Embedded cover art (JPEG/PNG bytes), valid until close. NULL if none.
 PC_API const uint8_t *pc_player_cover_art(PCPlayer *p, int *size);
 

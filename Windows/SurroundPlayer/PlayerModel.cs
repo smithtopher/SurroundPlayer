@@ -88,7 +88,7 @@ public sealed record AudioDevice(string Uid, string Name, int Channels, bool IsH
     public string Label => Name + (IsHdmi ? "  (HDMI)" : "") + (CanBitstream ? "  • DD" : "");
 }
 
-public sealed class PlayerModel : Observable
+public sealed partial class PlayerModel : Observable
 {
     public static readonly HashSet<string> MediaExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -571,6 +571,7 @@ public sealed class PlayerModel : Observable
             start_position = track.Start + Math.Max(0, start),   // cue tracks: offset into the file
             av_offset = AvOffsetMs / 1000,
         };
+        PrepareSubtitlesForOpen(track);
         string uid = EffectiveDeviceUID;
         IntPtr uidPtr = uid.Length > 0 ? Marshal.StringToCoTaskMemUTF8(uid) : IntPtr.Zero;
         cfg.device_uid = uidPtr;
@@ -768,6 +769,8 @@ public sealed class PlayerModel : Observable
         Artwork = null;
         AudioTracks = Array.Empty<string>();
         CurrentAudioTrack = -1;
+        SubtitleTracks = Array.Empty<string>();
+        CurrentSubtitleTrack = -1;
         Duration = 0;
     }
 
@@ -829,6 +832,8 @@ public sealed class PlayerModel : Observable
         OutputMode = info.mode;
         BitstreamCodecName = Native.Str(info.bitstream_codec, 32);
         HasVideo = info.has_video != 0;
+        VideoWidth = info.video_width;
+        VideoHeight = info.video_height;
         _fileDuration = info.duration;
         ApplyTrackInfo(track);
         var names = new List<string>();
@@ -838,6 +843,7 @@ public sealed class PlayerModel : Observable
             fixed (byte* b = buf) { Native.pc_player_audio_track_name(_player, i, b, 256); names.Add(Native.Str(b, 256)); }
         AudioTracks = names;
         CurrentAudioTrack = Native.pc_player_current_audio_track(_player);
+        LoadSubtitles(track);
         IntPtr art = Native.pc_player_cover_art(_player, out int size);
         if (art != IntPtr.Zero && size > 0)
         {

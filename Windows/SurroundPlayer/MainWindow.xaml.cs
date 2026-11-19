@@ -67,6 +67,11 @@ public sealed partial class MainWindow : Window
         };
 
         Model.PropertyChanged += Model_PropertyChanged;
+        _subTimer = DispatcherQueue.CreateTimer();
+        _subTimer.Interval = TimeSpan.FromMilliseconds(40);
+        _subTimer.Tick += (_, _) => { if (Model.PollSubtitle() is { } f) ShowSubtitle(f); };
+        _subTimer.Start();
+        Stage.SizeChanged += (_, _) => LayoutSubtitle();
         Model.Playlist.CollectionChanged += (_, _) => RefreshPlaylistView();
         Model.Devices.CollectionChanged += (_, _) => UpdateDeviceButton();
         PlaylistView.ItemsSource = Model.Playlist;
@@ -168,7 +173,16 @@ public sealed partial class MainWindow : Window
                 VisToggle.IsChecked = Model.VisualizerEnabled;
                 UpdateVisualizer();
                 break;
-            case nameof(PlayerModel.ShowsVisualizer): UpdateVisualizer(); break;
+            case nameof(PlayerModel.ShowsVisualizer): UpdateVisualizer(); UpdateSubtitleVisibility(); break;
+            case nameof(PlayerModel.SubtitleTracks):
+            case nameof(PlayerModel.CurrentSubtitleTrack):
+            case nameof(PlayerModel.HasVideo):
+                UpdateSubtitleButton();
+                UpdateSubtitleVisibility();
+                if (e.PropertyName == nameof(PlayerModel.HasVideo)) UpdateInfo();
+                break;
+            case nameof(PlayerModel.VideoWidth):
+            case nameof(PlayerModel.VideoHeight): LayoutSubtitle(); break;
             case nameof(PlayerModel.VisLocked):
                 if (_vis != null) _vis.Locked = Model.VisLocked;
                 VisLockIcon.Visibility = Model.VisLocked ? Visibility.Visible : Visibility.Collapsed;
@@ -464,6 +478,94 @@ public sealed partial class MainWindow : Window
         DeviceMenu.Items.Add(refresh);
     }
 
+    // ------------------------------------------------------------------ subtitles
+
+    private readonly DispatcherQueueTimer _subTimer;
+    private SubtitleFrame _subFrame = SubtitleFrame.None;
+
+    private void ShowSubtitle(SubtitleFrame f)
+    {
+        _subFrame = f;
+        if (f.Kind == Native.PC_SUB_BITMAP && f.Bgra != null)
+        {
+            var wb = new WriteableBitmap(f.W, f.H);
+            using (var s = wb.PixelBuffer.AsStream()) s.Write(f.Bgra, 0, f.Bgra.Length);
+            wb.Invalidate();
+            SubImage.Source = wb;
+        }
+        else SubImage.Source = null;
+        SubText.Text = f.Kind == Native.PC_SUB_TEXT ? f.Text : "";
+        SubImage.Visibility = f.Kind == Native.PC_SUB_BITMAP ? Visibility.Visible : Visibility.Collapsed;
+        SubTextBox.Visibility = f.Kind == Native.PC_SUB_TEXT && f.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        LayoutSubtitle();
+        UpdateSubtitleVisibility();
+    }
+
+    /// The video's letterboxed rectangle in the stage (it is drawn "uniform").
+    private (double X, double Y, double W, double H) VideoRect()
+    {
+        double sw = Stage.ActualWidth, sh = Stage.ActualHeight;
+        int vw = Model.VideoWidth, vh = Model.VideoHeight;
+        if (vw <= 0 || vh <= 0 || sw <= 0 || sh <= 0) return (0, 0, sw, sh);
+        double s = Math.Min(sw / vw, sh / vh);
+        return ((sw - vw * s) / 2, (sh - vh * s) / 2, vw * s, vh * s);
+    }
+
+    private void LayoutSubtitle()
+    {
+        var r = VideoRect();
+        var f = _subFrame;
+        if (f.Kind == Native.PC_SUB_BITMAP && f.RefW > 0 && f.RefH > 0)
+        {
+            double sx = r.W / f.RefW, sy = r.H / f.RefH;
+            SubImage.Width = f.W * sx;
+            SubImage.Height = f.H * sy;
+            SubImage.Margin = new Thickness(r.X + f.X * sx, r.Y + f.Y * sy, 0, 0);
+        }
+        SubText.FontSize = Math.Clamp(r.H * 0.05, 14, 72);
+        SubTextBox.MaxWidth = Math.Max(100, r.W * 0.9);
+        SubTextBox.Margin = new Thickness(0, 0, 0, Math.Max(0, Stage.ActualHeight - (r.Y + r.H)) + r.H * 0.06);
+    }
+
+    private void UpdateSubtitleVisibility()
+    {
+        bool show = Model.HasVideo && !(Model.ShowsVisualizer && _vis != null) && _subFrame.Kind != Native.PC_SUB_NONE;
+        SubtitleLayer.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void UpdateSubtitleButton()
+    {
+        SubtitleButton.Visibility = Model.HasVideo ? Visibility.Visible : Visibility.Collapsed;
+        int i = Model.CurrentSubtitleTrack;
+        SubtitleLabel.Text = i >= 0 && i < Model.SubtitleTracks.Count ? Model.SubtitleTracks[i] : "Off";
+    }
+
+    private void SubtitleMenu_Opening(object sender, object e)
+    {
+        SubtitleMenu.Items.Clear();
+        var off = new ToggleMenuFlyoutItem { Text = "Off", IsChecked = Model.CurrentSubtitleTrack < 0 };
+        off.Click += (_, _) => Model.SelectSubtitleTrack(-1);
+        SubtitleMenu.Items.Add(off);
+        for (int i = 0; i < Model.SubtitleTracks.Count; i++)
+        {
+            int index = i;
+            var item = new ToggleMenuFlyoutItem { Text = Model.SubtitleTracks[i], IsChecked = i == Model.CurrentSubtitleTrack };
+            item.Click += (_, _) => Model.SelectSubtitleTrack(index);
+            SubtitleMenu.Items.Add(item);
+        }
+        SubtitleMenu.Items.Add(new MenuFlyoutSeparator());
+        var load = new MenuFlyoutItem { Text = "Load Subtitle File…" };
+        load.Click += async (_, _) =>
+        {
+            var picker = new FileOpenPicker();
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+            foreach (var ext in PlayerModel.SubtitleExtensions) picker.FileTypeFilter.Add(ext);
+            var file = await picker.PickSingleFileAsync();
+            if (file != null) Model.LoadSubtitleFile(file.Path);
+        };
+        SubtitleMenu.Items.Add(load);
+    }
+
     private void AudioTrackMenu_Opening(object sender, object e)
     {
         AudioTrackMenu.Items.Clear();
@@ -611,6 +713,7 @@ public sealed partial class MainWindow : Window
             case (VirtualKey)219 or VirtualKey.P: _vis?.PreviousPreset(); break;   // [
             case VirtualKey.L: Model.VisLocked = !Model.VisLocked; break;
             case VirtualKey.A: Model.CycleAudioTrack(); break;
+            case VirtualKey.S: Model.CycleSubtitleTrack(); break;
             case VirtualKey.Escape when _fullScreen: ToggleFullScreen(); break;
             default: return;
         }

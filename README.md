@@ -43,6 +43,7 @@ Keys (in the player window, not while typing in the filter):
 | ] / [ | ] / [ (or N / P) | next / previous visualiser preset |
 | L | L | lock the current preset |
 | | A | next audio track (files with several) |
+| | S (or the CC button) | subtitles: off → each track → off |
 
 Full screen hides the toolbar and playlist. The transport controls float over the
 picture, and they and the cursor fade out after 3 s without mouse movement.
@@ -59,6 +60,7 @@ picture, and they and the cursor fade out after 3 s without mouse movement.
 | `.cue` sheets (one big file split into tracks) | ✓ | ✓ |
 | Open Recent (last 10 files, folders, cue sheets) | ✓ | ✓ |
 | Playlist restored at launch; save/open `.m3u8` playlists | — | ✓ |
+| Subtitles (embedded text and bitmap tracks, `.srt`/`.ass`/`.vtt` files) | — (engine ready) | ✓ |
 | Visualiser | ✓ | ✓ |
 
 **Artwork:** when the visualiser is off and the file has no video, the stage shows the
@@ -314,6 +316,7 @@ Sources/PlayerCore/        C engine: portable core + per-OS back-ends
   include/playercore.h     public API (PC_API exports for the Windows DLL)
   engine.c                 demux / decode / AC3+DTS encode / IEC 61937 / video / A-V sync (portable)
   pc_output.c              ring buffer, burst + keep-alive logic, render callback, clock (portable)
+  pc_subtitle.c            subtitle events (text / bitmap) and the timed lookup (portable)
   pc_platform.h            threads, locks, clock, sleep (POSIX/Apple and Win32)
   pc_audio_device.h        audio back-end interface
   pc_video_backend.h       video back-end interface

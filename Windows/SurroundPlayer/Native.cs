@@ -99,6 +99,26 @@ internal static unsafe class Native
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int pc_player_audio_track_count(IntPtr p);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern void pc_player_audio_track_name(IntPtr p, int index, byte* buf, int len);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int pc_player_current_audio_track(IntPtr p);
+
+    // subtitles
+    public const int PC_SUB_NONE = 0, PC_SUB_TEXT = 1, PC_SUB_BITMAP = 2;
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PCSubtitleState
+    {
+        public int serial, kind, text_len;
+        public int x, y, w, h;
+        public int ref_w, ref_h;
+    }
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int pc_player_subtitle_track_count(IntPtr p);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern void pc_player_subtitle_track_name(IntPtr p, int index, byte* buf, int len);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern void pc_player_subtitle_track_language(IntPtr p, int index, byte* buf, int len);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int pc_player_current_subtitle_track(IntPtr p);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern void pc_player_set_subtitle_track(IntPtr p, int index);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int pc_player_add_subtitle_file(IntPtr p,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path, [MarshalAs(UnmanagedType.LPUTF8Str)] string? name);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern void pc_player_subtitle_state(IntPtr p, out PCSubtitleState st);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int pc_player_subtitle_text(IntPtr p, byte* buf, int len);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int pc_player_subtitle_bitmap(IntPtr p, byte* bgra, int len);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern IntPtr pc_player_cover_art(IntPtr p, out int size);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int pc_list_output_devices([Out] PCDevice[] devs, int max);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern void pc_set_device_change_callback(DeviceChangeCallback? cb, IntPtr ctx);

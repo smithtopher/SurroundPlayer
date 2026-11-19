@@ -11,6 +11,7 @@
 #include "pc_output.h"
 #include "pc_platform.h"
 #include "pc_video_backend.h"
+#include "pc_subtitle.h"
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -208,6 +209,7 @@ static int fq_count(FrameQueue *f) {
 // player
 
 #define MAX_AUDIO_TRACKS 64
+#define MAX_SUB_TRACKS 64
 #define TAP_FRAMES 131072            // ~2.7 s at 48 kHz, power of two
 #define TAP_MARKERS 128
 #define TAP_RATE 48000
@@ -222,6 +224,12 @@ struct PCPlayer {
     double start_time;
     int astream, vstream;
     int audio_tracks[MAX_AUDIO_TRACKS], n_audio, cur_track;
+    // subtitles: tracks are streams (stream >= 0, decoded by the demux thread as they are read,
+    // whether selected or not, so switching is instant) or added files (path, loaded whole)
+    struct { int stream; char *path; char name[200]; char lang[16]; AVCodecContext *dec; PCSubs *store; }
+        subt[MAX_SUB_TRACKS];
+    _Atomic int n_sub, cur_sub;      // cur_sub: selected track, -1 off
+    int sub_last_track, sub_last_serial, sub_serial;   // pc_player_subtitle_state's view (caller's thread)
     AVCodecContext *adec, *vdec;
     PCVideoBackend *vb;
     PCOut *out;
@@ -307,6 +315,7 @@ PCPlayer *pc_player_create(void) {
     pc_mutex_init(&p->tap_lock);
     p->tap = av_calloc(TAP_FRAMES * 2, sizeof(float));
     p->astream = p->vstream = -1;
+    p->cur_sub = p->sub_last_track = -1;
     return p;
 }
 
@@ -904,6 +913,11 @@ static void do_seek(PCPlayer *p, double pos) {
     pq_flush(&p->aq);
     pq_flush(&p->vq);
     fq_flush(&p->fq, atomic_load(&p->vq.serial));
+    for (int i = 0; i < atomic_load(&p->n_sub); i++) {   // embedded subtitles are re-read from here
+        if (!p->subt[i].dec) continue;
+        avcodec_flush_buffers(p->subt[i].dec);
+        subs_clear(p->subt[i].store);
+    }
     atomic_store(&p->demux_eof, 0);
     atomic_store(&p->audio_eof, 0);
     atomic_store(&p->video_eof, 0);
@@ -913,6 +927,26 @@ static void do_seek(PCPlayer *p, double pos) {
     p->ext_started = 0;
     p->ext_paused_pts = pos;
     pc_mutex_unlock(&p->lock);
+}
+
+static int open_decoder(AVStream *st, AVCodecContext **out, PCVideoBackend *vb);
+
+static void decode_subtitle(PCPlayer *p, int track, AVPacket *pkt) {
+    AVStream *st = p->fmt->streams[pkt->stream_index];
+    AVCodecContext *dec = p->subt[track].dec;
+    AVSubtitle sub;
+    int got = 0;
+    if (avcodec_decode_subtitle2(dec, &sub, &got, pkt) < 0 || !got) return;
+    double base = sub.pts != AV_NOPTS_VALUE ? sub.pts / (double)AV_TIME_BASE
+                : pkt->pts != AV_NOPTS_VALUE ? pkt->pts * av_q2d(st->time_base) : NAN;
+    base -= p->start_time;
+    double start = base + sub.start_display_time / 1000.0;
+    double end = sub.end_display_time > sub.start_display_time && sub.end_display_time != UINT32_MAX
+                     ? base + sub.end_display_time / 1000.0
+                 : pkt->duration > 0 ? start + pkt->duration * av_q2d(st->time_base) : INFINITY;
+    subs_add(p->subt[track].store, &sub, start, end, dec->width, dec->height);
+    avsubtitle_free(&sub);
+    if (!isnan(start)) subs_prune(p->subt[track].store, start - 120);   // the demuxer runs a little ahead
 }
 
 static void *demux_thread(void *arg) {
@@ -946,6 +980,10 @@ static void *demux_thread(void *arg) {
         }
         if (pkt->stream_index == p->astream) pq_put(&p->aq, pkt);
         else if (pkt->stream_index == p->vstream) pq_put(&p->vq, pkt);
+        else if (p->fmt->streams[pkt->stream_index]->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+            for (int i = 0; i < atomic_load(&p->n_sub); i++)
+                if (p->subt[i].stream == pkt->stream_index && p->subt[i].dec) { decode_subtitle(p, i, pkt); break; }
+        }
         av_packet_unref(pkt);
     }
     av_packet_free(&pkt);
@@ -1184,6 +1222,9 @@ int pc_player_open(PCPlayer *p, const char *path, const PCConfig *cfg, int pause
     p->cfg.dump_path = cfg->dump_path ? av_strdup(cfg->dump_path) : NULL;
     p->astream = p->vstream = -1;
     p->n_audio = 0;
+    atomic_store(&p->n_sub, 0);
+    atomic_store(&p->cur_sub, -1);
+    p->sub_last_track = -1;
     p->cur_track = -1;
 
     if (avformat_open_input(&p->fmt, path, NULL, NULL) < 0) {
@@ -1204,6 +1245,22 @@ int pc_player_open(PCPlayer *p, const char *path, const PCConfig *cfg, int pause
         st->discard = AVDISCARD_ALL;
         if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && p->n_audio < MAX_AUDIO_TRACKS)
             p->audio_tracks[p->n_audio++] = (int)i;
+        if (st->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE && p->n_sub < MAX_SUB_TRACKS) {
+            int n = p->n_sub;
+            if (open_decoder(st, &p->subt[n].dec, NULL) < 0) continue;
+            p->subt[n].store = subs_create();
+            st->discard = AVDISCARD_DEFAULT;
+            const char *lang = meta(st->metadata, "language");
+            const char *title = meta(st->metadata, "title");
+            p->subt[n].stream = (int)i;
+            p->subt[n].path = NULL;
+            snprintf(p->subt[n].lang, sizeof(p->subt[n].lang), "%s", lang && strcmp(lang, "und") ? lang : "");
+            snprintf(p->subt[n].name, sizeof(p->subt[n].name), "%d: %s%s%s%s%s%s", n + 1,
+                     p->subt[n].lang, p->subt[n].lang[0] ? " - " : "", avcodec_get_name(st->codecpar->codec_id),
+                     title ? " - " : "", title ? title : "",
+                     (st->disposition & AV_DISPOSITION_FORCED) ? " (forced)" : "");
+            atomic_store(&p->n_sub, n + 1);
+        }
         if (st->disposition & AV_DISPOSITION_ATTACHED_PIC) {
             if (!p->art && st->attached_pic.size > 0) {
                 p->art = av_memdup(st->attached_pic.data, st->attached_pic.size);
@@ -1358,6 +1415,14 @@ static void close_internal(PCPlayer *p, int keep_out) {
     avformat_close_input(&p->fmt);
     av_freep(&p->art);
     p->art_size = 0;
+    for (int i = 0; i < p->n_sub; i++) {
+        av_freep(&p->subt[i].path);
+        avcodec_free_context(&p->subt[i].dec);
+        subs_destroy(p->subt[i].store);
+        p->subt[i].store = NULL;
+    }
+    atomic_store(&p->n_sub, 0);
+    atomic_store(&p->cur_sub, -1);
     free_cfg(&p->cfg);
     p->astream = p->vstream = -1;
     p->video_hw = 0;
@@ -1445,6 +1510,90 @@ void pc_player_audio_track_name(PCPlayer *p, int index, char *buf, int len) {
     const char *title = meta(st->metadata, "title");
     snprintf(buf, len, "%d: %s%s%s%s%s", index + 1, lang ? lang : "", lang ? " - " : "", desc,
              title ? " - " : "", title ? title : "");
+}
+
+int pc_player_subtitle_track_count(PCPlayer *p) { return p->is_open ? atomic_load(&p->n_sub) : 0; }
+int pc_player_current_subtitle_track(PCPlayer *p) { return p->is_open ? atomic_load(&p->cur_sub) : -1; }
+
+void pc_player_subtitle_track_name(PCPlayer *p, int index, char *buf, int len) {
+    if (len > 0) buf[0] = 0;
+    if (p->is_open && index >= 0 && index < atomic_load(&p->n_sub)) snprintf(buf, len, "%s", p->subt[index].name);
+}
+
+void pc_player_subtitle_track_language(PCPlayer *p, int index, char *buf, int len) {
+    if (len > 0) buf[0] = 0;
+    if (p->is_open && index >= 0 && index < atomic_load(&p->n_sub)) snprintf(buf, len, "%s", p->subt[index].lang);
+}
+
+void pc_player_set_subtitle_track(PCPlayer *p, int index) {
+    if (!p->is_open) return;
+    if (index < -1 || index >= atomic_load(&p->n_sub)) index = -1;
+    atomic_store(&p->cur_sub, index);
+}
+
+int pc_player_add_subtitle_file(PCPlayer *p, const char *path, const char *name) {
+    int n = atomic_load(&p->n_sub);
+    if (!p->is_open || !path || n >= MAX_SUB_TRACKS) return -1;
+    char err[256];
+    PCSubs *store = subs_create();
+    if (!store || subs_load_file(store, path, err, sizeof(err)) < 0) { subs_destroy(store); return -1; }
+    p->subt[n].stream = -1;
+    p->subt[n].path = av_strdup(path);
+    p->subt[n].dec = NULL;
+    p->subt[n].store = store;
+    p->subt[n].lang[0] = 0;
+    if (!name) {
+        const char *slash = strrchr(path, '/'), *bslash = strrchr(path, '\\');
+        const char *sep = slash > bslash ? slash : bslash;
+        name = sep ? sep + 1 : path;
+    }
+    snprintf(p->subt[n].name, sizeof(p->subt[n].name), "%d: %s", n + 1, name);
+    atomic_store(&p->n_sub, n + 1);   // published after the entry is complete
+    return n;
+}
+
+static PCSubs *current_store(PCPlayer *p, int *track) {
+    *track = p->is_open ? atomic_load(&p->cur_sub) : -1;
+    return *track >= 0 && *track < atomic_load(&p->n_sub) ? p->subt[*track].store : NULL;
+}
+
+void pc_player_subtitle_state(PCPlayer *p, PCSubtitleState *st) {
+    memset(st, 0, sizeof(*st));
+    int track;
+    PCSubs *store = current_store(p, &track);
+    if (store) {
+        double t = video_clock(p);
+        if (isnan(t)) {
+            pc_mutex_lock(&p->lock);
+            t = p->last_pos;
+            pc_mutex_unlock(&p->lock);
+        }
+        subs_state(store, t, st);
+    }
+    // one serial across track switches (each store counts its own)
+    if (track != p->sub_last_track || st->serial != p->sub_last_serial) {
+        p->sub_last_track = track;
+        p->sub_last_serial = st->serial;
+        p->sub_serial++;
+    }
+    st->serial = p->sub_serial;
+}
+
+int pc_player_subtitle_text(PCPlayer *p, char *buf, int len) {
+    int track;
+    PCSubs *store = current_store(p, &track);
+    if (len > 0) buf[0] = 0;
+    if (!store) return p->sub_serial;
+    int s = subs_text(store, buf, len);
+    return track == p->sub_last_track && s == p->sub_last_serial ? p->sub_serial : -1;
+}
+
+int pc_player_subtitle_bitmap(PCPlayer *p, uint8_t *bgra, int len) {
+    int track;
+    PCSubs *store = current_store(p, &track);
+    if (!store) return p->sub_serial;
+    int s = subs_bitmap(store, bgra, len);
+    return track == p->sub_last_track && s == p->sub_last_serial ? p->sub_serial : -1;
 }
 
 const uint8_t *pc_player_cover_art(PCPlayer *p, int *size) {

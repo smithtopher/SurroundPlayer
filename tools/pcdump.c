@@ -92,6 +92,7 @@ int main(int argc, char **argv) {
                         "       pcdump devices\n"
                         "       pcdump watch [--seconds N]\n"
                         "       pcdump play <media> [--device UID] [--pcm] [--dts] [--stereo] [--mc-pcm] [--track N] [--seconds N] [--debug]\n"
+                        "         [--sub N] [--sub-file F]  (select a subtitle track / add a file; prints changes)\n"
                         "         (play reopens at the same position when the output is lost)\n");
         return 1;
     }
@@ -107,7 +108,8 @@ int main(int argc, char **argv) {
     const char *media = argv[play ? 2 : 1];
     if (!play) cfg.dump_path = argv[2];
     double seconds = 0;
-    int debug = 0;
+    int debug = 0, sub_track = -2;
+    const char *sub_file = NULL;
     for (int i = 3; i < argc; i++) {
         if (!strcmp(argv[i], "--pcm")) cfg.bitstream_enabled = 0;
         else if (!strcmp(argv[i], "--dts")) cfg.bitstream_codec = PC_CODEC_DTS;
@@ -117,6 +119,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--debug")) debug = 1;
         else if (!strcmp(argv[i], "--device") && i + 1 < argc) cfg.device_uid = argv[++i];
         else if (!strcmp(argv[i], "--seconds") && i + 1 < argc) seconds = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--sub") && i + 1 < argc) sub_track = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--sub-file") && i + 1 < argc) sub_file = argv[++i];
     }
     int frames = 0;
     PCPlayer *p = pc_player_create();
@@ -138,6 +142,18 @@ int main(int argc, char **argv) {
         pc_player_audio_track_name(p, i, name, sizeof(name));
         printf("track %s%s\n", name, i == pc_player_current_audio_track(p) ? "  (playing)" : "");
     }
+    if (sub_file) {
+        int idx = pc_player_add_subtitle_file(p, sub_file, NULL);
+        if (sub_track == -2) sub_track = idx;
+    }
+    int nsubs = pc_player_subtitle_track_count(p);
+    for (int i = 0; i < nsubs; i++) {
+        char name[256];
+        pc_player_subtitle_track_name(p, i, name, sizeof(name));
+        printf("subtitle track %s\n", name);
+    }
+    if (sub_track >= 0) pc_player_set_subtitle_track(p, sub_track);
+    int sub_serial = 0;
     if (play) pc_set_device_change_callback(on_devices_changed, NULL);
     int64_t start = pc_now_ns(), next_report = start + 1000000000LL;
     int is_open = 1;
@@ -145,6 +161,24 @@ int main(int argc, char **argv) {
     while (!atomic_load(&done)) {
         pc_sleep_us(20000);
         int64_t now = pc_now_ns();
+        if (sub_track >= 0 && is_open) {   // print what a subtitle overlay would show, when it changes
+            PCSubtitleState ss;
+            pc_player_subtitle_state(p, &ss);
+            if (ss.serial != sub_serial) {
+                sub_serial = ss.serial;
+                double pos = pc_player_position(p);
+                if (ss.kind == PC_SUB_TEXT) {
+                    char text[1024];
+                    pc_player_subtitle_text(p, text, sizeof(text));
+                    for (char *c = text; *c; c++) if (*c == '\n') *c = '|';
+                    printf("  sub @%.2f: %s\n", pos, text);
+                } else if (ss.kind == PC_SUB_BITMAP) {
+                    printf("  sub @%.2f: bitmap %dx%d at %d,%d on %dx%d\n", pos, ss.w, ss.h, ss.x, ss.y, ss.ref_w, ss.ref_h);
+                } else {
+                    printf("  sub @%.2f: -\n", pos);
+                }
+            }
+        }
         if (play && atomic_exchange(&devices_changed, 0)) {
             printf("[%.1f s] devices changed%s\n", elapsed_s(start),
                    is_open && pc_player_output_lost(p) ? ": output lost" : "");

@@ -82,6 +82,15 @@
                 <Grid x:Name="Stage" Background="Black" DoubleTapped="Stage_DoubleTapped">
                     <SwapChainPanel x:Name="VideoPanel" SizeChanged="VideoPanel_SizeChanged"
                                     CompositionScaleChanged="VideoPanel_CompositionScaleChanged" />
+                    <!-- subtitles, placed over the video's letterboxed rectangle -->
+                    <Grid x:Name="SubtitleLayer" IsHitTestVisible="False" Visibility="Collapsed">
+                        <Image x:Name="SubImage" HorizontalAlignment="Left" VerticalAlignment="Top" Stretch="Fill" />
+                        <Border x:Name="SubTextBox" HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                                Background="#A0000000" CornerRadius="6" Padding="14,4" Visibility="Collapsed">
+                            <TextBlock x:Name="SubText" Foreground="White" TextAlignment="Center" TextWrapping="Wrap"
+                                       FontWeight="SemiBold" />
+                        </Border>
+                    </Grid>
                     <StackPanel x:Name="NowPlaying" VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="16" Padding="32">
                         <Grid Width="320" Height="320" HorizontalAlignment="Center">
                             <Border x:Name="ArtPlaceholder" CornerRadius="16" Background="#10FFFFFF">
@@ -162,6 +171,17 @@
                             </StackPanel>
                             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right"
                                         VerticalAlignment="Center">
+                                <DropDownButton x:Name="SubtitleButton" IsTabStop="False" Visibility="Collapsed"
+                                                ToolTipService.ToolTip="Subtitles (S: next)">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Glyph="&#xE7F0;" FontSize="14" />
+                                        <TextBlock x:Name="SubtitleLabel" FontSize="12" MaxWidth="160"
+                                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <DropDownButton.Flyout>
+                                        <MenuFlyout x:Name="SubtitleMenu" Opening="SubtitleMenu_Opening" />
+                                    </DropDownButton.Flyout>
+                                </DropDownButton>
                                 <DropDownButton x:Name="AudioTrackButton" IsTabStop="False" Visibility="Collapsed"
                                                 ToolTipService.ToolTip="Audio track (A: next track)">
                                     <StackPanel Orientation="Horizontal" Spacing="6">

@@ -21,6 +21,7 @@ public sealed class Settings
     public double avOffsetMs { get; set; } = 0;
     public bool visualizerEnabled { get; set; } = false;
     public List<string> recentFiles { get; set; } = new();   // Open Recent, newest first (max 10)
+    public string subtitleLanguage { get; set; } = "";       // subtitles: "" off, "*" any, else a 2-letter code (Windows only)
     // Windows only: last window size in DIPs (0 = default 1280x800)
     public double windowWidth { get; set; }
     public double windowHeight { get; set; }

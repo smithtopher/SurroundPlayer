@@ -11,7 +11,7 @@ OUT=.build/portable
 mkdir -p "$OUT"
 CFLAGS=(-std=c11 -O2 -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare -DPC_STUB_BACKENDS
         -ISources/PlayerCore -ISources/PlayerCore/include -I"$FF/include")
-SRCS=(Sources/PlayerCore/engine.c Sources/PlayerCore/pc_output.c
+SRCS=(Sources/PlayerCore/engine.c Sources/PlayerCore/pc_output.c Sources/PlayerCore/pc_subtitle.c
       Sources/PlayerCore/platform/stub/audio_stub.c Sources/PlayerCore/platform/stub/video_stub.c
       Sources/PlayerCore/platform/apple/audio_coreaudio.c Sources/PlayerCore/platform/apple/video_apple.c)
 OBJS=()

@@ -41,6 +41,7 @@ endif()
 add_library(playercore_stub STATIC
     "${PC_DIR}/engine.c"
     "${PC_DIR}/pc_output.c"
+    "${PC_DIR}/pc_subtitle.c"
     "${PC_DIR}/platform/stub/audio_stub.c"
     "${PC_DIR}/platform/stub/video_stub.c")
 target_include_directories(playercore_stub PUBLIC "${PC_DIR}" "${PC_DIR}/include")
@@ -56,6 +57,7 @@ target_link_libraries(pcdump PRIVATE playercore_stub)
 add_library(playercore_win STATIC
     "${PC_DIR}/engine.c"
     "${PC_DIR}/pc_output.c"
+    "${PC_DIR}/pc_subtitle.c"
     "${PC_DIR}/platform/windows/audio_wasapi.c"
     "${PC_DIR}/platform/windows/video_d3d11.c")
 target_include_directories(playercore_win PUBLIC "${PC_DIR}" "${PC_DIR}/include")
@@ -67,6 +69,7 @@ target_link_libraries(playercore_win PUBLIC ffmpeg ole32 avrt d3d11 dxgi)
 add_library(playercore SHARED
     "${PC_DIR}/engine.c"
     "${PC_DIR}/pc_output.c"
+    "${PC_DIR}/pc_subtitle.c"
     "${PC_DIR}/platform/windows/audio_wasapi.c"
     "${PC_DIR}/platform/windows/video_d3d11.c")
 target_include_directories(playercore PRIVATE "${PC_DIR}" "${PC_DIR}/include")
