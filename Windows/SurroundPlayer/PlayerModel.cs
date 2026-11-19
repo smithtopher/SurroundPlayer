@@ -188,6 +188,18 @@ public sealed partial class PlayerModel : Observable
         Album = current.Cue?.Album ?? "";
     }
 
+    /// Replaces the playlist with an .m3u/.m3u8 file's entries and plays the first one.
+    public void LoadPlaylist(string path)
+    {
+        if (PlaylistFile.ReadM3u(path).Count == 0)
+        {
+            ErrorMessage = $"{System.IO.Path.GetFileName(path)} has no playable entries";
+            return;
+        }
+        ClearPlaylist();
+        Add(new[] { path }, playFirst: true);
+    }
+
     /// Saves the playlist as an .m3u8 file.
     public void SavePlaylist(string path)
     {

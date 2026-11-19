@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.7] — 2026-11-19 (Windows)
+
+### Windows
+- **Load…** next to Save… under the playlist (or **Ctrl+L**) replaces the playlist with an
+  `.m3u`/`.m3u8` file and plays its first item.
+
 ## [1.2.6] — 2026-11-19 (Windows)
 
 ### Fixed

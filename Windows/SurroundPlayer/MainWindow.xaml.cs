@@ -399,6 +399,16 @@ public sealed partial class MainWindow : Window
     private void Stage_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e) => ToggleFullScreen();
     private void Clear_Click(object sender, RoutedEventArgs e) => Model.ClearPlaylist();
 
+    private async void LoadPlaylist_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = new FileOpenPicker();
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+        picker.FileTypeFilter.Add(".m3u8");
+        picker.FileTypeFilter.Add(".m3u");
+        var file = await picker.PickSingleFileAsync();
+        if (file != null) Model.LoadPlaylist(file.Path);
+    }
+
     private async void SavePlaylist_Click(object sender, RoutedEventArgs e)
     {
         if (Model.Playlist.Count == 0) return;
@@ -718,6 +728,7 @@ public sealed partial class MainWindow : Window
         if (ctrl && e.Key == VirtualKey.F) { SearchBox.Focus(FocusState.Keyboard); e.Handled = true; return; }
         if (ctrl && e.Key == VirtualKey.O) { Open_Click(this, new RoutedEventArgs()); e.Handled = true; return; }
         if (ctrl && e.Key == VirtualKey.S) { SavePlaylist_Click(this, new RoutedEventArgs()); e.Handled = true; return; }
+        if (ctrl && e.Key == VirtualKey.L) { LoadPlaylist_Click(this, new RoutedEventArgs()); e.Handled = true; return; }
         if (ctrl && e.Key == VirtualKey.R) { RecentButton.Flyout.ShowAt(RecentButton); e.Handled = true; return; }
         if (ctrl && (int)e.Key == 188) { Settings_Click(this, new RoutedEventArgs()); e.Handled = true; return; }   // Ctrl+,
         var focused = FocusManager.GetFocusedElement(Root.XamlRoot);

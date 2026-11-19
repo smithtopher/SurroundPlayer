@@ -81,7 +81,8 @@ docs; this file is the context for continuing development.
       `Shutdown`; restored in the model constructor (missing files dropped; current selected,
       not opened; `TogglePlay` resumes at `_resumeAt`). `.m3u/.m3u8`: `Expand` replaces a playlist
       by its entries (nested playlists and URLs skipped); Save… / Ctrl+S writes UTF-8 `.m3u8` with
-      relative paths, cue tracks as their sheet (`CueTrack.CuePath`).
+      relative paths, cue tracks as their sheet (`CueTrack.CuePath`). Load… / Ctrl+L
+      (`PlayerModel.LoadPlaylist`) replaces the playlist and plays the first entry; Open adds.
     - **Open Recent (Windows, 2026-11-19):** a history button (DropDownButton) next to the
       folder button, same rules as the Mac menu (see `recentFiles` below), in
       `PlayerModel.NoteRecent/OpenRecent/RecentTitle`, menu built in `RecentMenu_Opening`.

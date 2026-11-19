@@ -269,6 +269,9 @@
                         <TextBlock x:Name="CountText" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="4">
+                        <HyperlinkButton x:Name="LoadPlaylistButton" Content="Load…" FontSize="12" Padding="4,0"
+                                         Click="LoadPlaylist_Click" IsTabStop="False"
+                                         ToolTipService.ToolTip="Replace the playlist with an .m3u/.m3u8 file (Ctrl+L)" />
                         <HyperlinkButton x:Name="SavePlaylistButton" Content="Save…" FontSize="12" Padding="4,0"
                                          Click="SavePlaylist_Click" IsTabStop="False"
                                          ToolTipService.ToolTip="Save the playlist as an .m3u8 file (Ctrl+S)" />
