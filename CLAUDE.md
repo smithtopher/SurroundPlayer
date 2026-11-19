@@ -75,6 +75,10 @@ docs; this file is the context for continuing development.
       (playlist persistence: both apps now, see below).
     - Shortcuts: Mac ⌘ → Ctrl (Ctrl+←/→ prev/next, Ctrl+F search, Ctrl+O open, Ctrl+, settings).
       Ctrl+R opens the Open Recent menu (Windows only; no menu bar there).
+    - **Keyboard focus (Windows):** buttons are `IsTabStop="False"`, so the search box is the only
+      focus holder and single keys are ignored while it has focus. `FocusPlayer()` moves focus to
+      the playlist after pickers/dialogs, Enter/Esc and any click outside the search box
+      (`Root_PointerPressedAnywhere`, handledEventsToo); Space in an empty search box toggles play.
     - **Drag and drop (Windows):** `Root_Drop` reads CF_HDROP ("FileDrop": DROPFILES header +
       paths) under a drop deferral; `GetStorageItemsAsync` is only a fallback (unpackaged, it can
       return one item or throw 0x80040064 when "Shell IDList Array" is unreadable). Drops are

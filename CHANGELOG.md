@@ -7,6 +7,10 @@
   instead of WinUI's storage-item API, which in an unpackaged app can return only one item or
   fail, and it holds the drop open while reading. A failed drop now says why instead of
   silently adding nothing.
+- **Space always plays/pauses.** The search box is the only control that keeps keyboard focus,
+  and once it had it (a click, or WinUI handing it focus after a file dialog) Space and the
+  other single keys stopped working. Clicking anywhere else, Enter, Esc and closing a dialog now
+  hand focus back to the player, and Space in an empty search box plays/pauses.
 
 ### Engine
 - **Read-ahead raised from about 2 to 10 seconds** of compressed audio/video, so a slow drive

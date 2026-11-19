@@ -77,6 +77,7 @@ public sealed partial class MainWindow : Window
         PlaylistView.ItemsSource = Model.Playlist;
 
         PositionSlider.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, _) => BeginScrub()), true);
+        Root.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(Root_PointerPressedAnywhere), true);
         PositionSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler((_, _) => EndScrub()), true);
         PositionSlider.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler((_, _) => EndScrub()), true);
         PositionSlider.ValueChanged += (_, e) => { if (!_updatingSlider) PositionText.Text = TimeString(e.NewValue); };
@@ -406,6 +407,7 @@ public sealed partial class MainWindow : Window
         picker.FileTypeFilter.Add(".m3u8");
         picker.FileTypeFilter.Add(".m3u");
         var file = await picker.PickSingleFileAsync();
+        FocusPlayer();
         if (file != null) Model.LoadPlaylist(file.Path);
     }
 
@@ -416,6 +418,7 @@ public sealed partial class MainWindow : Window
         WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
         picker.FileTypeChoices.Add("Playlist", new List<string> { ".m3u8" });
         var file = await picker.PickSaveFileAsync();
+        FocusPlayer();
         if (file != null) Model.SavePlaylist(file.Path);
     }
 
@@ -434,6 +437,7 @@ public sealed partial class MainWindow : Window
         WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
         picker.FileTypeFilter.Add("*");
         var files = await picker.PickMultipleFilesAsync();
+        FocusPlayer();
         if (files.Count > 0) Model.Add(files.Select(f => f.Path).OrderBy(p => p, Comparer<string>.Create(Native.StrCmpLogicalW)),
                                        playFirst: Model.Current == null || !Model.IsPlaying);
     }
@@ -444,10 +448,36 @@ public sealed partial class MainWindow : Window
         WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
         picker.FileTypeFilter.Add("*");
         var folder = await picker.PickSingleFolderAsync();
+        FocusPlayer();
         if (folder != null) Model.Add(new[] { folder.Path }, playFirst: Model.Current == null || !Model.IsPlaying);
     }
 
-    private async void Settings_Click(object sender, RoutedEventArgs e) => await new SettingsDialog(Model, Root.XamlRoot).ShowAsync();
+    private async void Settings_Click(object sender, RoutedEventArgs e)
+    {
+        await new SettingsDialog(Model, Root.XamlRoot).ShowAsync();
+        FocusPlayer();
+    }
+
+    /// The search box is the only control that keeps keyboard focus, and while it has it, Space
+    /// and the other single keys type. Move focus to the playlist after dialogs (WinUI hands it
+    /// to the first focusable control, the search box), clicks elsewhere, Enter and Esc.
+    private void FocusPlayer()
+    {
+        if (IsInSearchBox(FocusManager.GetFocusedElement(Root.XamlRoot) as DependencyObject))
+            PlaylistView.Focus(FocusState.Programmatic);
+    }
+
+    private bool IsInSearchBox(DependencyObject? d)
+    {
+        for (; d != null; d = VisualTreeHelper.GetParent(d))
+            if (d == SearchBox) return true;
+        return false;
+    }
+
+    private void Root_PointerPressedAnywhere(object sender, PointerRoutedEventArgs e)
+    {
+        if (!IsInSearchBox(e.OriginalSource as DependencyObject)) FocusPlayer();
+    }
 
     private void RecentMenu_Opening(object sender, object e)
     {
@@ -596,6 +626,8 @@ public sealed partial class MainWindow : Window
             WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
             foreach (var ext in PlayerModel.SubtitleExtensions) picker.FileTypeFilter.Add(ext);
             var file = await picker.PickSingleFileAsync();
+            FocusPlayer();
+        FocusPlayer();
             if (file != null) Model.LoadSubtitleFile(file.Path);
         };
         SubtitleMenu.Items.Add(load);
@@ -655,6 +687,7 @@ public sealed partial class MainWindow : Window
     {
         var first = (_filtered ?? (IList<Track>)Model.Playlist).FirstOrDefault();
         if (first != null) Model.Play(first);
+        FocusPlayer();
     }
 
     private void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
@@ -782,7 +815,16 @@ public sealed partial class MainWindow : Window
         if (ctrl && e.Key == VirtualKey.R) { RecentButton.Flyout.ShowAt(RecentButton); e.Handled = true; return; }
         if (ctrl && (int)e.Key == 188) { Settings_Click(this, new RoutedEventArgs()); e.Handled = true; return; }   // Ctrl+,
         var focused = FocusManager.GetFocusedElement(Root.XamlRoot);
-        if (focused is TextBox || focused is AutoSuggestBox) return;
+        if (focused is TextBox || focused is AutoSuggestBox)
+        {
+            // an empty search box has nothing to type a space into: Space still plays/pauses
+            if (e.Key == VirtualKey.Space && !ctrl && !alt && SearchBox.Text.Length == 0)
+            {
+                Model.TogglePlay();
+                e.Handled = true;
+            }
+            return;
+        }
         if (ctrl && e.Key == VirtualKey.Left) { Model.Previous(); e.Handled = true; return; }
         if (ctrl && e.Key == VirtualKey.Right) { Model.Next(); e.Handled = true; return; }
         if (ctrl || alt) return;
