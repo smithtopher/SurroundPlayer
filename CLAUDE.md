@@ -43,6 +43,10 @@ docs; this file is the context for continuing development.
       imports; nothing to install). It unpacks to `%TEMP%\.net` on first start (~10 s; cached
       starts ~1 s). It's unsigned, so SmartScreen asks once (More info → Run anyway).
       **Bump `<Version>` in SurroundPlayer.csproj for each shared build** (shown in Settings).
+      - **Releasing:** commit the exe to `Windows/` on the `releases` branch (macOS zips go in
+        `macOS/`) **and publish a GitHub release with the gh CLI**: `gh release create vX.Y.Z
+        <exe> [<mac zip>] --target <main sha> --notes-file <CHANGELOG section>`, newest `--latest`.
+        Tags v1.1.0–v1.2.8 exist; v1.2.1 and v1.2.7 carry both platforms.
       - The single-file publish uses its own obj/bin (`build\windows\*-singlefile`). Sharing
         them with the normal build made WinAppSDK reuse the wrong reg-free WinRT manifest,
         causing "ClassFactory cannot supply requested class" at start.
@@ -264,7 +268,12 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
   `bits_per_raw_sample`, else the sample size of lossless/PCM codecs, else 0 = lossy). The
   source description ends ", 24-bit". Windows shows "24-bit / 96 kHz" beside the output badge
   (`PlayerModel.SourceFormat`; Mac: `sourceFormat`, same place). PCInfo grew at the end:
-  `Native.cs` mirrors it.
+  `Native.cs` mirrors it. `source_bitrate` (after `source_bits`; `audio_stream_bitrate`: the
+  stream's bit_rate, else the file average when there are no other streams): Windows shows
+  "320 kb/s / 44.1 kHz" for lossy sources. The Mac UI doesn't use it yet.
+- **Open dialogs (Windows):** `FileDialogs.cs` wraps Windows' IFileOpenDialog (files or folders,
+  multi-select). WinUI's FolderPicker throws E_FAIL here; FileOpenPicker/FileSavePicker still
+  work and are used for Load…/Save… and subtitle files.
 - **Read-ahead:** `queue_enough` in engine.c: the demuxer reads until each queue holds
   `READ_AHEAD_SECONDS` (10 s; was 2 s, which let USB-drive stalls pause playback) or
   `READ_AHEAD_PACKETS` for duration-less packets, capped at 256 MB in total.

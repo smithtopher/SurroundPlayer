@@ -431,25 +431,31 @@ public sealed partial class MainWindow : Window
         PlaylistColumn.Width = show ? new GridLength(300) : new GridLength(0);
     }
 
-    private async void Open_Click(object sender, RoutedEventArgs e)
+    private void Open_Click(object sender, RoutedEventArgs e)
     {
-        var picker = new FileOpenPicker();
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
-        picker.FileTypeFilter.Add("*");
-        var files = await picker.PickMultipleFilesAsync();
-        FocusPlayer();
-        if (files.Count > 0) Model.Add(files.Select(f => f.Path).OrderBy(p => p, Comparer<string>.Create(Native.StrCmpLogicalW)),
-                                       playFirst: Model.Current == null || !Model.IsPlaying);
+        var exts = string.Join(";", PlayerModel.MediaExtensions.Select(x => "*." + x)
+                                 .Concat(new[] { "*.cue", "*.m3u", "*.m3u8" }));
+        AddFromDialog(folders: false, "Add Files", new[] { ("Music, video and playlists", exts), ("All files", "*.*") });
     }
 
-    private async void OpenFolder_Click(object sender, RoutedEventArgs e)
+    private void OpenFolder_Click(object sender, RoutedEventArgs e) => AddFromDialog(folders: true, "Add Folders");
+
+    /// Windows' open dialog (several files, or several folders), then add what was chosen.
+    private void AddFromDialog(bool folders, string title, (string, string)[]? filters = null)
     {
-        var picker = new FolderPicker();
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
-        picker.FileTypeFilter.Add("*");
-        var folder = await picker.PickSingleFolderAsync();
+        List<string> paths;
+        try { paths = FileDialogs.Open(WinRT.Interop.WindowNative.GetWindowHandle(this), title, folders, multiple: true, filters); }
+        catch (Exception ex)
+        {
+            DebugTrace.Log($"open dialog failed: 0x{ex.HResult:X8} {ex.Message}");
+            Model.ErrorMessage = "Could not open the dialog: " + ex.Message;
+            return;
+        }
         FocusPlayer();
-        if (folder != null) Model.Add(new[] { folder.Path }, playFirst: Model.Current == null || !Model.IsPlaying);
+        DebugTrace.Log($"open dialog: {paths.Count} {(folders ? "folders" : "files")}");
+        if (paths.Count > 0)
+            Model.Add(paths.OrderBy(p => p, Comparer<string>.Create(Native.StrCmpLogicalW)),
+                      playFirst: Model.Current == null || !Model.IsPlaying);
     }
 
     private async void Settings_Click(object sender, RoutedEventArgs e)
@@ -809,6 +815,8 @@ public sealed partial class MainWindow : Window
         bool ctrl = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
         bool alt = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Menu).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
         if (ctrl && e.Key == VirtualKey.F) { SearchBox.Focus(FocusState.Keyboard); e.Handled = true; return; }
+        bool shift = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+        if (ctrl && shift && e.Key == VirtualKey.O) { OpenFolder_Click(this, new RoutedEventArgs()); e.Handled = true; return; }
         if (ctrl && e.Key == VirtualKey.O) { Open_Click(this, new RoutedEventArgs()); e.Handled = true; return; }
         if (ctrl && e.Key == VirtualKey.S) { SavePlaylist_Click(this, new RoutedEventArgs()); e.Handled = true; return; }
         if (ctrl && e.Key == VirtualKey.L) { LoadPlaylist_Click(this, new RoutedEventArgs()); e.Handled = true; return; }

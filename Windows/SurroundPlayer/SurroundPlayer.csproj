@@ -19,8 +19,8 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
-    <!-- bump for each shared build: 1.1.0 = multichannel PCM, track menu, visualiser; 1.2.0 = .cue sheets; 1.2.1 = folder artwork; 1.2.2 = Open Recent; 1.2.3 = source format; 1.2.4 = playlist save/restore; 1.2.5 = subtitles; 1.2.6 = default subtitle track, controls bar fit; 1.2.7 = load playlist; 1.2.8 = drag and drop, read-ahead, Space -->
-    <Version>1.2.8</Version>
+    <!-- bump for each shared build: 1.1.0 = multichannel PCM, track menu, visualiser; 1.2.0 = .cue sheets; 1.2.1 = folder artwork; 1.2.2 = Open Recent; 1.2.3 = source format; 1.2.4 = playlist save/restore; 1.2.5 = subtitles; 1.2.6 = default subtitle track, controls bar fit; 1.2.7 = load playlist; 1.2.8 = drag and drop, read-ahead, Space; 1.2.9 = folder dialog, bitrate -->
+    <Version>1.2.9</Version>
     <EngineDir>$(MSBuildThisFileDirectory)..\..\.build\win-release\</EngineDir>
   </PropertyGroup>
 

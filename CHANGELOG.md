@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.9] — 2026-11-19 (Windows)
+
+### Windows
+- **Adding folders works again.** The folder button used WinUI's FolderPicker, which in this
+  unpackaged app fails (E_FAIL) after a folder is chosen, silently adding nothing. Both Open
+  (files) and the folder button now use Windows' own open dialog, which can also pick several
+  folders at once. **Ctrl+Shift+O** adds folders; Open's file list is filtered to music, video,
+  cue sheets and playlists (All files is still available).
+- **Bitrate for lossy audio:** the source format next to the output badge reads e.g.
+  "320 kb/s / 44.1 kHz" for MP3/AAC/AC3/DTS/Opus…; lossless stays "24-bit / 96 kHz".
+
+### Engine
+- `PCInfo.source_bitrate`: the audio track's bitrate (the stream's, else the file average for
+  audio-only files).
+
 ## [1.2.8] — 2026-11-19 (Windows)
 
 ### Windows

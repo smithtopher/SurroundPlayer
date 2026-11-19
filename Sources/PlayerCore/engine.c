@@ -1015,6 +1015,18 @@ static int audio_stream_bits(const AVCodecParameters *c) {
     return b >= 8 ? b : 0;
 }
 
+/// The audio track's bitrate: what the stream declares (MP3/AAC/AC3/DTS headers), else, for a
+/// file with no other streams (attached cover art aside), the file's average.
+static int64_t audio_stream_bitrate(AVFormatContext *fmt, AVStream *st) {
+    if (st->codecpar->bit_rate > 0) return st->codecpar->bit_rate;
+    int others = 0;
+    for (unsigned i = 0; i < fmt->nb_streams; i++) {
+        AVStream *o = fmt->streams[i];
+        if (o != st && !(o->disposition & AV_DISPOSITION_ATTACHED_PIC)) others++;
+    }
+    return others == 0 && fmt->bit_rate > 0 ? fmt->bit_rate : 0;
+}
+
 static void describe_audio_stream(AVStream *st, char *buf, int len) {
     char layout[64] = "";
     av_channel_layout_describe(&st->codecpar->ch_layout, layout, sizeof(layout));
@@ -1214,6 +1226,8 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
     p->info.mode = mode;
     describe_audio_stream(st, p->info.source_audio, sizeof(p->info.source_audio));
     p->info.source_rate = st->codecpar->sample_rate;
+    int64_t br = audio_stream_bitrate(p->fmt, st);
+    p->info.source_bitrate = br > INT32_MAX ? INT32_MAX : (int)br;
     p->info.source_bits = audio_stream_bits(st->codecpar);
     return 0;
 }

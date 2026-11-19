@@ -38,6 +38,7 @@ Keys (in the player window, not while typing in the filter):
 | ← → / ↑ ↓ | ← → / ↑ ↓ | back/forward 10 s / 1 min |
 | ⌘← ⌘→ | Ctrl+← Ctrl+→ | previous / next track |
 | ⌘O / ⌘F / ⌘, | Ctrl+O / Ctrl+F / Ctrl+, | open / search / settings |
+| | Ctrl+Shift+O (or the folder button) | add folders |
 | File ▸ Open Recent | Ctrl+R (or the history button) | recently opened files, folders and cue sheets |
 | | Ctrl+S (or Save… under the playlist) | save the playlist as `.m3u8` |
 | | Ctrl+L (or Load… under the playlist) | replace the playlist with an `.m3u`/`.m3u8` |

@@ -23,13 +23,13 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" Spacing="4">
-                <Button x:Name="OpenButton" Click="Open_Click" IsTabStop="False" ToolTipService.ToolTip="Add files or folders (Ctrl+O)">
+                <Button x:Name="OpenButton" Click="Open_Click" IsTabStop="False" ToolTipService.ToolTip="Add files (Ctrl+O)">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon Glyph="&#xE710;" FontSize="14" />
                         <TextBlock Text="Open" />
                     </StackPanel>
                 </Button>
-                <Button Click="OpenFolder_Click" IsTabStop="False" ToolTipService.ToolTip="Add a folder">
+                <Button Click="OpenFolder_Click" IsTabStop="False" ToolTipService.ToolTip="Add folders (Ctrl+Shift+O)">
                     <FontIcon Glyph="&#xE8F4;" FontSize="14" />
                 </Button>
                 <DropDownButton x:Name="RecentButton" IsTabStop="False" ToolTipService.ToolTip="Open recent (Ctrl+R)">

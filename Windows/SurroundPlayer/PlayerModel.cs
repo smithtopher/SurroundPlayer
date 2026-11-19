@@ -241,11 +241,13 @@ public sealed partial class PlayerModel : Observable
     /// Short source format for the controls bar, e.g. "24-bit / 96 kHz" or "44.1 kHz" (lossy).
     public string SourceFormat { get => _sourceFormat; private set => Set(ref _sourceFormat, value); }
 
-    public static string FormatRate(int rate, int bits)
+    /// "24-bit / 96 kHz" for lossless/PCM; "320 kb/s / 44.1 kHz" for lossy formats (no bit depth).
+    public static string FormatRate(int rate, int bits, int bitrate = 0)
     {
         if (rate <= 0) return "";
         string khz = (rate / 1000.0).ToString(rate % 1000 == 0 ? "0" : "0.#", CultureInfo.InvariantCulture) + " kHz";
-        return bits > 0 ? $"{bits}-bit / {khz}" : khz;
+        if (bits > 0) return $"{bits}-bit / {khz}";
+        return bitrate > 0 ? $"{(bitrate + 500) / 1000} kb/s / {khz}" : khz;
     }
     public string OutputDescription { get => _outputDescription; private set => Set(ref _outputDescription, value); }
     public string VideoDescription { get => _videoDescription; private set => Set(ref _videoDescription, value); }
@@ -838,7 +840,7 @@ public sealed partial class PlayerModel : Observable
         Artist = Native.Str(info.artist, 256);
         Album = Native.Str(info.album, 256);
         SourceAudio = Native.Str(info.source_audio, 256);
-        SourceFormat = FormatRate(info.source_rate, info.source_bits);
+        SourceFormat = FormatRate(info.source_rate, info.source_bits, info.source_bitrate);
         OutputDescription = Native.Str(info.output, 512);
         VideoDescription = Native.Str(info.video, 256);
         OutputMode = info.mode;

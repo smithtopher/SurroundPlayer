@@ -70,6 +70,8 @@ typedef struct {
     int source_rate;            // Hz of the playing audio track; 0 if none
     int source_bits;            // bits per sample of the source (PCM, lossless, or what a DTS/
                                 // MLP header declares); 0 for lossy formats that have none
+    int source_bitrate;         // bit/s of the playing audio track (the stream's, or the file
+                                // average for audio-only files); 0 if unknown
 } PCInfo;
 
 typedef struct {
