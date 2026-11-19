@@ -1,0 +1,920 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Surround Player — Repository Overview</title>
+<style>
+  @page { size: A4; margin: 16mm 15mm 16mm 15mm; }
+  :root {
+    --ink: #1d2330; --muted: #5d6677; --line: #d7dbe3; --soft: #f3f5f9;
+    --blue: #2f5fd0; --blue-l: #e7eefc; --teal: #11806f; --teal-l: #e2f4f0;
+    --amber: #b86e00; --amber-l: #fcf1df; --rose: #b8324f; --rose-l: #fbe7ec;
+    --violet: #6a44b8; --violet-l: #efe9fa; --grey-l: #eef0f4;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+         color: var(--ink); font-size: 10.2pt; line-height: 1.45; margin: 0; background: #fff; }
+  h1 { font-size: 26pt; margin: 0 0 6px; letter-spacing: -0.5px; }
+  h2 { font-size: 15pt; margin: 0 0 8px; padding-bottom: 4px; border-bottom: 2px solid var(--blue); }
+  h3 { font-size: 11.5pt; margin: 14px 0 4px; }
+  p { margin: 5px 0 8px; }
+  code { font-family: "SF Mono", Menlo, monospace; font-size: 8.8pt; background: var(--soft);
+         padding: 0 3px; border-radius: 3px; }
+  .page { page-break-after: always; }
+  .page:last-child { page-break-after: auto; }
+  .lead { font-size: 11.5pt; color: var(--muted); }
+  .why { border-left: 4px solid var(--amber); background: var(--amber-l); padding: 6px 10px;
+         margin: 8px 0; border-radius: 0 4px 4px 0; }
+  .why b:first-child { color: var(--amber); }
+  .note { border-left: 4px solid var(--blue); background: var(--blue-l); padding: 6px 10px;
+          margin: 8px 0; border-radius: 0 4px 4px 0; }
+  .warn { border-left: 4px solid var(--rose); background: var(--rose-l); padding: 6px 10px;
+          margin: 8px 0; border-radius: 0 4px 4px 0; }
+  figure { margin: 8px 0 10px; }
+  figcaption { font-size: 8.6pt; color: var(--muted); text-align: center; margin-top: 2px; }
+  svg { width: 100%; height: auto; display: block; }
+  svg text { font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  svg .mono { font-family: "SF Mono", Menlo, monospace; }
+  table { border-collapse: collapse; width: 100%; font-size: 9pt; margin: 6px 0 10px; }
+  th, td { border: 1px solid var(--line); padding: 4px 6px; text-align: left; vertical-align: top; }
+  th { background: var(--soft); }
+  ul { margin: 4px 0 8px; padding-left: 18px; } li { margin: 2px 0; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .cover { height: 260mm; display: flex; flex-direction: column; justify-content: space-between; }
+  .tag { display: inline-block; font-size: 8.5pt; padding: 1px 7px; border-radius: 10px; margin-right: 4px; }
+  .t-done { background: var(--teal-l); color: var(--teal); }
+  .t-wip { background: var(--amber-l); color: var(--amber); }
+  .toc li { margin: 3px 0; }
+  .small { font-size: 8.8pt; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- ============================ COVER ============================ -->
+<section class="page cover">
+  <div>
+    <div class="small" style="letter-spacing:2px;text-transform:uppercase;margin-top:20mm">Repository overview · November 2026</div>
+    <h1 style="margin-top:6px">Surround Player</h1>
+    <p class="lead">A music and video player for macOS and Windows 11 that plays surround sound over HDMI
+    as a compressed Dolby Digital or DTS bitstream (IEC 61937), modelled on Kodi's WASAPI-exclusive passthrough.</p>
+
+    <svg viewBox="0 0 720 170" style="margin-top:14mm">
+      <defs>
+        <marker id="ca" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2f5fd0"/></marker>
+      </defs>
+      <g font-size="12">
+        <rect x="10" y="50" width="120" height="64" rx="10" fill="#e7eefc" stroke="#2f5fd0"/>
+        <text x="70" y="78" text-anchor="middle" font-weight="700">Surround Player</text>
+        <text x="70" y="96" text-anchor="middle" font-size="10" fill="#5d6677">Mac / Windows PC</text>
+
+        <rect x="210" y="50" width="120" height="64" rx="10" fill="#efe9fa" stroke="#6a44b8"/>
+        <text x="270" y="78" text-anchor="middle" font-weight="700">Samsung TV</text>
+        <text x="270" y="96" text-anchor="middle" font-size="10" fill="#5d6677">pass-through</text>
+
+        <rect x="410" y="50" width="120" height="64" rx="10" fill="#e2f4f0" stroke="#11806f"/>
+        <text x="470" y="78" text-anchor="middle" font-weight="700">AC3 amp</text>
+        <text x="470" y="96" text-anchor="middle" font-size="10" fill="#5d6677">decodes 5.1</text>
+
+        <g fill="#fcf1df" stroke="#b86e00">
+          <circle cx="610" cy="40" r="14"/><circle cx="660" cy="40" r="14"/><circle cx="710" cy="82" r="0"/>
+          <circle cx="635" cy="82" r="14"/><circle cx="610" cy="126" r="14"/><circle cx="660" cy="126" r="14"/>
+          <rect x="682" y="70" width="26" height="24" rx="4"/>
+        </g>
+        <g font-size="9" text-anchor="middle" fill="#b86e00" font-weight="700">
+          <text x="610" y="44">L</text><text x="660" y="44">R</text><text x="635" y="86">C</text>
+          <text x="610" y="130">SL</text><text x="660" y="130">SR</text><text x="695" y="86">LFE</text>
+        </g>
+
+        <line x1="130" y1="82" x2="206" y2="82" stroke="#2f5fd0" stroke-width="2.5" marker-end="url(#ca)"/>
+        <text x="168" y="72" text-anchor="middle" font-size="10" font-weight="700" fill="#2f5fd0">HDMI</text>
+        <line x1="330" y1="82" x2="406" y2="82" stroke="#2f5fd0" stroke-width="2.5" marker-end="url(#ca)"/>
+        <text x="368" y="72" text-anchor="middle" font-size="10" font-weight="700" fill="#2f5fd0">optical</text>
+        <line x1="530" y1="82" x2="590" y2="82" stroke="#2f5fd0" stroke-width="2.5" marker-end="url(#ca)"/>
+        <text x="168" y="134" text-anchor="middle" font-size="9.5" fill="#5d6677">AC3 / DTS bursts</text>
+        <text x="368" y="134" text-anchor="middle" font-size="9.5" fill="#5d6677">same bits, untouched</text>
+      </g>
+    </svg>
+
+    <h3 style="margin-top:12mm">Contents</h3>
+    <ol class="toc">
+      <li>The problem: why a bitstream, and why it is hard</li>
+      <li>IEC 61937 in one page</li>
+      <li>Architecture: portable core and per-OS back-ends</li>
+      <li>Inside the engine: threads and data flow</li>
+      <li>Choosing what to send: the mode decision</li>
+      <li>The render callback: whole bursts and keep-alive silence</li>
+      <li>The clock and A/V sync</li>
+      <li>Platform back-ends: CoreAudio vs WASAPI, VideoToolbox vs D3D11VA</li>
+      <li>The apps, the visualiser and hot-plug</li>
+      <li>Build, test and safety rules</li>
+      <li>Status, limitations and next steps</li>
+    </ol>
+  </div>
+  <div class="small">Sources: README.md, CLAUDE.md, docs/PORTING_WINDOWS.md and the engine sources
+  (<code>engine.c</code>, <code>pc_output.c</code>, <code>pc_audio_device.h</code>, <code>playercore.h</code>).
+  Engine core ≈ 1,850 lines of C; back-ends ≈ 1,400; apps ≈ 4,400 lines of Swift and C#.</div>
+</section>
+
+<!-- ============================ 1. PROBLEM ============================ -->
+<section class="page">
+  <h2>1 · The problem: why a bitstream, and why it is hard</h2>
+  <p>The user's playback chain is <b>computer → HDMI → Samsung TV → optical (S/PDIF) → AC3-capable amp</b>.
+  The last link decides everything. Optical S/PDIF carries only <b>two channels of PCM</b>. It cannot carry
+  5.1 PCM. A stock player sends decoded multichannel PCM over HDMI; the TV then downmixes it to stereo for the
+  optical port, and the amp never sees surround.</p>
+  <p>The way through is to send the surround audio <b>still compressed</b>, as Dolby Digital (AC3) or DTS, wrapped
+  so that it looks like a stereo 48 kHz PCM stream (IEC 61937). The TV in pass-through mode forwards those bits
+  unchanged, and the amp decodes the 5.1 itself.</p>
+
+  <figure>
+  <svg viewBox="0 0 720 250">
+    <defs>
+      <marker id="a1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#5d6677"/></marker>
+      <marker id="a1g" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#11806f"/></marker>
+      <marker id="a1r" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#b8324f"/></marker>
+    </defs>
+    <g font-size="11">
+      <text x="10" y="18" font-weight="700" fill="#b8324f">A normal player</text>
+      <rect x="10" y="30" width="130" height="46" rx="7" fill="#eef0f4" stroke="#9aa3b2"/>
+      <text x="75" y="50" text-anchor="middle" font-weight="600">Decode to PCM</text>
+      <text x="75" y="66" text-anchor="middle" font-size="9.5" fill="#5d6677">6 ch, OS mixer</text>
+      <rect x="200" y="30" width="130" height="46" rx="7" fill="#efe9fa" stroke="#6a44b8"/>
+      <text x="265" y="50" text-anchor="middle" font-weight="600">TV</text>
+      <text x="265" y="66" text-anchor="middle" font-size="9.5" fill="#5d6677">downmix 6 → 2</text>
+      <rect x="390" y="30" width="130" height="46" rx="7" fill="#e2f4f0" stroke="#11806f"/>
+      <text x="455" y="50" text-anchor="middle" font-weight="600">Amp</text>
+      <text x="455" y="66" text-anchor="middle" font-size="9.5" fill="#5d6677">stereo PCM in</text>
+      <rect x="580" y="30" width="130" height="46" rx="7" fill="#fbe7ec" stroke="#b8324f"/>
+      <text x="645" y="50" text-anchor="middle" font-weight="700" fill="#b8324f">Stereo only</text>
+      <text x="645" y="66" text-anchor="middle" font-size="9.5" fill="#5d6677">surround is lost</text>
+      <line x1="140" y1="53" x2="196" y2="53" stroke="#b8324f" stroke-width="2" marker-end="url(#a1r)"/>
+      <line x1="330" y1="53" x2="386" y2="53" stroke="#b8324f" stroke-width="2" marker-end="url(#a1r)"/>
+      <line x1="520" y1="53" x2="576" y2="53" stroke="#b8324f" stroke-width="2" marker-end="url(#a1r)"/>
+      <text x="168" y="92" text-anchor="middle" font-size="9" fill="#5d6677">HDMI: 6ch PCM</text>
+      <text x="358" y="92" text-anchor="middle" font-size="9" fill="#5d6677">optical: 2ch PCM</text>
+
+      <text x="10" y="138" font-weight="700" fill="#11806f">Surround Player</text>
+      <rect x="10" y="150" width="130" height="58" rx="7" fill="#e7eefc" stroke="#2f5fd0"/>
+      <text x="75" y="170" text-anchor="middle" font-weight="600">AC3 / DTS packets</text>
+      <text x="75" y="185" text-anchor="middle" font-size="9.5" fill="#5d6677">passed through or</text>
+      <text x="75" y="198" text-anchor="middle" font-size="9.5" fill="#5d6677">encoded, IEC 61937</text>
+      <rect x="200" y="150" width="130" height="58" rx="7" fill="#efe9fa" stroke="#6a44b8"/>
+      <text x="265" y="172" text-anchor="middle" font-weight="600">TV</text>
+      <text x="265" y="188" text-anchor="middle" font-size="9.5" fill="#5d6677">pass-through: forwards</text>
+      <text x="265" y="200" text-anchor="middle" font-size="9.5" fill="#5d6677">the bits untouched</text>
+      <rect x="390" y="150" width="130" height="58" rx="7" fill="#e2f4f0" stroke="#11806f"/>
+      <text x="455" y="172" text-anchor="middle" font-weight="600">Amp</text>
+      <text x="455" y="188" text-anchor="middle" font-size="9.5" fill="#5d6677">sees "Dolby Digital",</text>
+      <text x="455" y="200" text-anchor="middle" font-size="9.5" fill="#5d6677">decodes 5.1</text>
+      <rect x="580" y="150" width="130" height="58" rx="7" fill="#e2f4f0" stroke="#11806f"/>
+      <text x="645" y="175" text-anchor="middle" font-weight="700" fill="#11806f">5.1 surround</text>
+      <text x="645" y="191" text-anchor="middle" font-size="9.5" fill="#5d6677">all six channels</text>
+      <line x1="140" y1="179" x2="196" y2="179" stroke="#11806f" stroke-width="2" marker-end="url(#a1g)"/>
+      <line x1="330" y1="179" x2="386" y2="179" stroke="#11806f" stroke-width="2" marker-end="url(#a1g)"/>
+      <line x1="520" y1="179" x2="576" y2="179" stroke="#11806f" stroke-width="2" marker-end="url(#a1g)"/>
+      <text x="168" y="224" text-anchor="middle" font-size="9" fill="#5d6677">HDMI: "2ch PCM" that is AC3</text>
+      <text x="358" y="224" text-anchor="middle" font-size="9" fill="#5d6677">optical: same bitstream</text>
+    </g>
+  </svg>
+  <figcaption>Figure 1. Optical is the bottleneck. A compressed bitstream fits through it; multichannel PCM does not.</figcaption>
+  </figure>
+
+  <h3>Why it is hard</h3>
+  <ul>
+    <li><b>Every bit must arrive untouched.</b> The OS mixer, volume, resampling, dither or any effects processing
+      would corrupt the bitstream and turn it into loud noise. The player has to take the device for itself
+      (CoreAudio <i>hog mode</i> with mixing off; WASAPI <i>exclusive mode</i>).</li>
+    <li><b>The receiver must stay locked.</b> If the stream stops or a burst is torn, the amp drops out of
+      Dolby Digital and takes up to a second to re-lock. So the player sends <b>encoded silence</b> while
+      paused, seeking or between tracks, and only switches between real data and silence on burst boundaries.</li>
+    <li><b>Most sources aren't AC3.</b> AAC, FLAC, E-AC3, TrueHD and DTS-HD tracks have to be decoded and
+      re-encoded to AC3 or DTS on the fly.</li>
+    <li><b>Video must follow audio.</b> With a large ring buffer and an amp that adds decode delay, the picture has to be
+      timed against what is actually leaving the device, not against wall time.</li>
+    <li><b>Bitstreaming the wrong device is dangerous.</b> IEC 61937 data played on speakers or headphones is full-scale noise.</li>
+  </ul>
+  <div class="why"><b>Why model it on Kodi?</b> Kodi's WASAPI-exclusive passthrough is a proven design for exactly this
+  problem. The project maps each Kodi building block onto CoreAudio (and later back onto WASAPI): exclusive stream,
+  no mixer, IEC 61937 subtype, ActiveAE transcoding, <code>CAEPackIEC61937</code>, keep-alive silence and a sink
+  kept open across tracks.</div>
+</section>
+
+<!-- ============================ 2. IEC 61937 ============================ -->
+<section class="page">
+  <h2>2 · IEC 61937 in one page</h2>
+  <p>IEC 61937 is how compressed audio travels over interfaces built for PCM (S/PDIF, HDMI). Each compressed
+  frame becomes a <b>burst</b>: a short preamble, the frame itself, then zero padding. The burst is exactly as long as
+  the PCM the frame would decode to (2 channels × 16 bit × the frame's sample count), so the link runs at the normal
+  48 kHz stereo rate. Only the receiver knows it isn't audio.</p>
+
+  <figure>
+  <svg viewBox="0 0 720 200">
+    <g font-size="10.5">
+      <text x="10" y="20" font-weight="700">AC3 burst: 1536 samples × 4 bytes = 6144 bytes (32 ms at 48 kHz)</text>
+      <rect x="10" y="32" width="38" height="40" fill="#fbe7ec" stroke="#b8324f"/><text x="29" y="50" text-anchor="middle" font-size="9" class="mono">Pa</text><text x="29" y="63" text-anchor="middle" font-size="7.5" class="mono">F872</text>
+      <rect x="48" y="32" width="38" height="40" fill="#fbe7ec" stroke="#b8324f"/><text x="67" y="50" text-anchor="middle" font-size="9" class="mono">Pb</text><text x="67" y="63" text-anchor="middle" font-size="7.5" class="mono">4E1F</text>
+      <rect x="86" y="32" width="38" height="40" fill="#fcf1df" stroke="#b86e00"/><text x="105" y="50" text-anchor="middle" font-size="9" class="mono">Pc</text><text x="105" y="63" text-anchor="middle" font-size="7.5">type</text>
+      <rect x="124" y="32" width="38" height="40" fill="#fcf1df" stroke="#b86e00"/><text x="143" y="50" text-anchor="middle" font-size="9" class="mono">Pd</text><text x="143" y="63" text-anchor="middle" font-size="7.5">length</text>
+      <rect x="162" y="32" width="260" height="40" fill="#e7eefc" stroke="#2f5fd0"/><text x="292" y="50" text-anchor="middle" font-weight="600">AC3 frame</text><text x="292" y="64" text-anchor="middle" font-size="9" fill="#5d6677">e.g. 2560 bytes at 640 kb/s</text>
+      <rect x="422" y="32" width="288" height="40" fill="#eef0f4" stroke="#9aa3b2"/><text x="566" y="56" text-anchor="middle" fill="#5d6677">zero padding to 6144 bytes</text>
+
+      <text x="10" y="108" font-weight="700">DTS type I burst: 512 samples × 4 bytes = 2048 bytes (10.7 ms)</text>
+      <rect x="10" y="120" width="38" height="40" fill="#fbe7ec" stroke="#b8324f"/><text x="29" y="144" text-anchor="middle" font-size="9" class="mono">Pa</text>
+      <rect x="48" y="120" width="38" height="40" fill="#fbe7ec" stroke="#b8324f"/><text x="67" y="144" text-anchor="middle" font-size="9" class="mono">Pb</text>
+      <rect x="86" y="120" width="38" height="40" fill="#fcf1df" stroke="#b86e00"/><text x="105" y="144" text-anchor="middle" font-size="9" class="mono">Pc</text>
+      <rect x="124" y="120" width="38" height="40" fill="#fcf1df" stroke="#b86e00"/><text x="143" y="144" text-anchor="middle" font-size="9" class="mono">Pd</text>
+      <rect x="162" y="120" width="190" height="40" fill="#efe9fa" stroke="#6a44b8"/><text x="257" y="138" text-anchor="middle" font-weight="600">DTS core frame</text><text x="257" y="152" text-anchor="middle" font-size="9" fill="#5d6677">≤ 2040 bytes at 1509.75 kb/s</text>
+      <rect x="352" y="120" width="14" height="40" fill="#eef0f4" stroke="#9aa3b2"/>
+      <text x="380" y="138" font-size="9.5" fill="#5d6677">Both DTS rates (1509.75 and 754.5 kb/s) fit a 2048-byte</text>
+      <text x="380" y="152" font-size="9.5" fill="#5d6677">burst together with its 8-byte preamble.</text>
+      <text x="10" y="190" font-size="9.5" fill="#5d6677">Pa/Pb are the sync words; Pc carries the data type; Pd the payload length. Packing is done by FFmpeg's "spdif" muxer.</text>
+    </g>
+  </svg>
+  <figcaption>Figure 2. Burst layout. Burst sizes drive the whole output design: the ring only ever receives whole bursts.</figcaption>
+  </figure>
+
+  <h3>What follows from this</h3>
+  <table>
+    <tr><th>Fact</th><th>Consequence in the code</th></tr>
+    <tr><td>A burst must be delivered whole and in order</td><td>Writes to the ring are always whole bursts; the render callback switches source (real / silence) only at burst boundaries.</td></tr>
+    <tr><td>Silence must still be a valid bitstream</td><td>The engine encodes a silent frame in the current codec and hands it to the output as the <i>silence burst</i> for keep-alive.</td></tr>
+    <tr><td>Burst size differs per codec (6144 vs 2048)</td><td>The output can be reused across files only when device, mode and burst size match; a codec change forces a ~0.75 s reopen.</td></tr>
+    <tr><td>The link must look like 2 ch / 48 kHz / 16-bit</td><td>Back-ends must open exactly that: CoreAudio's <code>cac3</code> digital format, or WASAPI's <code>KSDATAFORMAT_SUBTYPE_IEC61937_DOLBY_DIGITAL / _DTS</code>.</td></tr>
+    <tr><td>Optical carries only AC3 and DTS <i>core</i></td><td>DTS-HD MA/HRA is passed as its core; E-AC3, TrueHD and DTS Express are transcoded.</td></tr>
+  </table>
+</section>
+
+<!-- ============================ 3. ARCHITECTURE ============================ -->
+<section class="page">
+  <h2>3 · Architecture: portable core and per-OS back-ends</h2>
+  <p>The repo is one C engine shared by two native apps. The engine was deliberately split so that everything hard
+  (decoding, encoding, IEC 61937, burst logic, clock, sync) is <b>portable C with no OS media code</b>. Each OS
+  supplies two small back-ends that only own the device.</p>
+
+  <figure>
+  <svg viewBox="0 0 720 420">
+    <g font-size="11">
+      <!-- apps -->
+      <rect x="10" y="10" width="340" height="78" rx="9" fill="#e7eefc" stroke="#2f5fd0"/>
+      <text x="180" y="30" text-anchor="middle" font-weight="700">macOS app · SwiftUI</text>
+      <text x="180" y="48" text-anchor="middle" font-size="9.5" fill="#5d6677">PlayerModel · ContentView · VideoSink (AVSampleBufferDisplayLayer)</text>
+      <text x="180" y="62" text-anchor="middle" font-size="9.5" fill="#5d6677">Metal visualiser · Settings (UserDefaults)</text>
+      <text x="180" y="78" text-anchor="middle" font-size="9" fill="#2f5fd0">Sources/SurroundPlayer/</text>
+
+      <rect x="370" y="10" width="340" height="78" rx="9" fill="#e7eefc" stroke="#2f5fd0"/>
+      <text x="540" y="30" text-anchor="middle" font-weight="700">Windows app · WinUI 3, C# .NET 8</text>
+      <text x="540" y="48" text-anchor="middle" font-size="9.5" fill="#5d6677">PlayerModel · MainWindow · VideoRenderer (SwapChainPanel)</text>
+      <text x="540" y="62" text-anchor="middle" font-size="9.5" fill="#5d6677">D3D11 visualiser (HLSL) · Settings (JSON) · P/Invoke</text>
+      <text x="540" y="78" text-anchor="middle" font-size="9" fill="#2f5fd0">Windows/SurroundPlayer/</text>
+
+      <!-- API -->
+      <rect x="10" y="104" width="700" height="38" rx="7" fill="#1d2330"/>
+      <text x="360" y="121" text-anchor="middle" font-weight="700" fill="#fff">Public C API · include/playercore.h</text>
+      <text x="360" y="135" text-anchor="middle" font-size="9" fill="#c9cfdb" class="mono">pc_player_open / seek / set_paused / position · pc_list_output_devices · pc_player_vis_samples · PC_API exports (DLL)</text>
+
+      <!-- core -->
+      <rect x="10" y="158" width="700" height="112" rx="9" fill="#e2f4f0" stroke="#11806f"/>
+      <text x="22" y="176" font-weight="700" fill="#11806f">PORTABLE CORE  (identical on every OS; verified byte-identical output)</text>
+      <rect x="24" y="186" width="330" height="72" rx="6" fill="#fff" stroke="#11806f"/>
+      <text x="189" y="204" text-anchor="middle" font-weight="700" class="mono">engine.c</text>
+      <text x="189" y="220" text-anchor="middle" font-size="9.5" fill="#5d6677">demux · decode · swresample · AC3/DTS encode</text>
+      <text x="189" y="234" text-anchor="middle" font-size="9.5" fill="#5d6677">IEC 61937 via FFmpeg spdif muxer · video decode</text>
+      <text x="189" y="248" text-anchor="middle" font-size="9.5" fill="#5d6677">presenter synced to audio clock · visualiser tap</text>
+      <rect x="366" y="186" width="330" height="72" rx="6" fill="#fff" stroke="#11806f"/>
+      <text x="531" y="204" text-anchor="middle" font-weight="700" class="mono">pc_output.c</text>
+      <text x="531" y="220" text-anchor="middle" font-size="9.5" fill="#5d6677">lock-free ring · render() callback</text>
+      <text x="531" y="234" text-anchor="middle" font-size="9.5" fill="#5d6677">burst boundaries · keep-alive silence · pause/flush</text>
+      <text x="531" y="248" text-anchor="middle" font-size="9.5" fill="#5d6677">clock (seqlock record + pts markers) · file sink</text>
+
+      <!-- interfaces -->
+      <rect x="10" y="284" width="230" height="34" rx="6" fill="#fcf1df" stroke="#b86e00"/>
+      <text x="125" y="300" text-anchor="middle" font-weight="700" class="mono">pc_audio_device.h  pcad_*</text>
+      <text x="125" y="312" text-anchor="middle" font-size="9" fill="#5d6677">open · start · close · list · lost</text>
+      <rect x="250" y="284" width="230" height="34" rx="6" fill="#fcf1df" stroke="#b86e00"/>
+      <text x="365" y="300" text-anchor="middle" font-weight="700" class="mono">pc_video_backend.h  pcvb_*</text>
+      <text x="365" y="312" text-anchor="middle" font-size="9" fill="#5d6677">hw decode setup · native frames</text>
+      <rect x="490" y="284" width="220" height="34" rx="6" fill="#fcf1df" stroke="#b86e00"/>
+      <text x="600" y="300" text-anchor="middle" font-weight="700" class="mono">pc_platform.h</text>
+      <text x="600" y="312" text-anchor="middle" font-size="9" fill="#5d6677">threads · locks · ns clock · sleep</text>
+
+      <!-- backends -->
+      <rect x="10" y="334" width="230" height="76" rx="8" fill="#efe9fa" stroke="#6a44b8"/>
+      <text x="125" y="352" text-anchor="middle" font-weight="700">platform/apple/</text>
+      <text x="125" y="368" text-anchor="middle" font-size="9.5" fill="#5d6677">CoreAudio HAL: hog, mixing off,</text>
+      <text x="125" y="381" text-anchor="middle" font-size="9.5" fill="#5d6677">physical format cac3</text>
+      <text x="125" y="396" text-anchor="middle" font-size="9.5" fill="#5d6677">VideoToolbox → CVPixelBuffer</text>
+      <rect x="250" y="334" width="230" height="76" rx="8" fill="#efe9fa" stroke="#6a44b8"/>
+      <text x="365" y="352" text-anchor="middle" font-weight="700">platform/windows/</text>
+      <text x="365" y="368" text-anchor="middle" font-size="9.5" fill="#5d6677">WASAPI exclusive, IEC 61937 subtypes,</text>
+      <text x="365" y="381" text-anchor="middle" font-size="9.5" fill="#5d6677">IMMNotificationClient hot-plug</text>
+      <text x="365" y="396" text-anchor="middle" font-size="9.5" fill="#5d6677">D3D11VA → NV12/P010 texture slices</text>
+      <rect x="490" y="334" width="220" height="76" rx="8" fill="#eef0f4" stroke="#9aa3b2"/>
+      <text x="600" y="352" text-anchor="middle" font-weight="700">platform/stub/</text>
+      <text x="600" y="368" text-anchor="middle" font-size="9.5" fill="#5d6677">no devices, software video</text>
+      <text x="600" y="381" text-anchor="middle" font-size="9.5" fill="#5d6677">file dumps only (pcdump)</text>
+      <text x="600" y="396" text-anchor="middle" font-size="9.5" fill="#5d6677">portability proof · bring-up</text>
+    </g>
+  </svg>
+  <figcaption>Figure 3. Layers. Apps talk only to <code>playercore.h</code>; the core talks only to the back-end interfaces.</figcaption>
+  </figure>
+
+  <div class="why"><b>Why this split?</b> The rule is <i>"back-ends own only the device"</i>. All IEC 61937, keep-alive and
+  clock logic lives in the portable <code>render()</code> callback, so it is written and debugged once. That paid off on
+  Windows: <code>pc_platform.h</code>'s Win32 branch compiled unchanged, and <code>regress.sh</code> printed
+  <code>ALL PASSED</code> with the stub back-ends <i>before any device code existed</i>.
+  <code>check_portable.sh</code> enforces the rule on every macOS run by building the core against the stubs and
+  failing on any OS media header or symbol.</div>
+
+  <div class="note"><b>Opaque native frames.</b> <code>PCNativeFrame</code> is a <code>CVPixelBufferRef</code> on macOS and a
+  D3D11 texture-array slice (or BGRA CPU frame) on Windows. The core never looks inside; the UI does, so frames go
+  from the GPU decoder to the screen without a copy.</div>
+</section>
+
+<!-- ============================ 4. ENGINE ============================ -->
+<section class="page">
+  <h2>4 · Inside the engine: threads and data flow</h2>
+  <p>A player instance runs four threads plus the device's real-time callback. Queues decouple them, so a slow
+  decode never blocks the device, and a seek bumps a <i>serial</i> number that makes every stage drop stale data.</p>
+
+  <figure>
+  <svg viewBox="0 0 720 430">
+    <defs>
+      <marker id="a4" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1d2330"/></marker>
+      <marker id="a4b" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2f5fd0"/></marker>
+    </defs>
+    <g font-size="10.5">
+      <!-- file -->
+      <rect x="10" y="170" width="78" height="56" rx="7" fill="#eef0f4" stroke="#9aa3b2"/>
+      <text x="49" y="194" text-anchor="middle" font-weight="700">Media file</text>
+      <text x="49" y="209" text-anchor="middle" font-size="9" fill="#5d6677">mkv mp4 flac…</text>
+      <!-- demux -->
+      <rect x="110" y="160" width="96" height="76" rx="7" fill="#e7eefc" stroke="#2f5fd0"/>
+      <text x="158" y="182" text-anchor="middle" font-weight="700">demux thread</text>
+      <text x="158" y="198" text-anchor="middle" font-size="9" fill="#5d6677">av_read_frame</text>
+      <text x="158" y="211" text-anchor="middle" font-size="9" fill="#5d6677">handles seeks</text>
+      <text x="158" y="224" text-anchor="middle" font-size="9" fill="#5d6677">caps 256 MB</text>
+      <line x1="88" y1="198" x2="106" y2="198" stroke="#1d2330" stroke-width="1.6" marker-end="url(#a4)"/>
+
+      <!-- packet queues -->
+      <rect x="228" y="88" width="70" height="30" rx="5" fill="#fff" stroke="#9aa3b2" stroke-dasharray="3,2"/>
+      <text x="263" y="107" text-anchor="middle" font-size="9">audio pkts</text>
+      <rect x="228" y="282" width="70" height="30" rx="5" fill="#fff" stroke="#9aa3b2" stroke-dasharray="3,2"/>
+      <text x="263" y="301" text-anchor="middle" font-size="9">video pkts</text>
+      <path d="M206,180 C218,150 218,110 226,104" fill="none" stroke="#1d2330" stroke-width="1.6" marker-end="url(#a4)"/>
+      <path d="M206,218 C218,250 218,290 226,296" fill="none" stroke="#1d2330" stroke-width="1.6" marker-end="url(#a4)"/>
+
+      <!-- audio thread -->
+      <rect x="318" y="20" width="238" height="166" rx="8" fill="#e2f4f0" stroke="#11806f"/>
+      <text x="437" y="38" text-anchor="middle" font-weight="700" fill="#11806f">audio thread</text>
+      <rect x="330" y="48" width="104" height="40" rx="5" fill="#fff" stroke="#11806f"/>
+      <text x="382" y="65" text-anchor="middle" font-weight="600" font-size="9.5">Passthrough</text>
+      <text x="382" y="78" text-anchor="middle" font-size="8.5" fill="#5d6677">source packets as-is</text>
+      <rect x="442" y="48" width="104" height="66" rx="5" fill="#fff" stroke="#11806f"/>
+      <text x="494" y="65" text-anchor="middle" font-weight="600" font-size="9.5">Transcode</text>
+      <text x="494" y="78" text-anchor="middle" font-size="8.5" fill="#5d6677">decode → swr 48k 5.1</text>
+      <text x="494" y="90" text-anchor="middle" font-size="8.5" fill="#5d6677">→ ac3 / dca encoder</text>
+      <text x="494" y="104" text-anchor="middle" font-size="8.5" fill="#5d6677">(FIFO to frame size)</text>
+      <rect x="330" y="96" width="104" height="30" rx="5" fill="#fff" stroke="#11806f"/>
+      <text x="382" y="115" text-anchor="middle" font-weight="600" font-size="9.5">PCM: decode → float</text>
+      <rect x="330" y="140" width="216" height="36" rx="5" fill="#11806f"/>
+      <text x="438" y="156" text-anchor="middle" font-weight="700" fill="#fff" font-size="9.5">FFmpeg "spdif" muxer → IEC 61937</text>
+      <text x="438" y="169" text-anchor="middle" fill="#d9f1eb" font-size="8.5">whole bursts + pts → ring  (PCM skips this)</text>
+      <line x1="298" y1="103" x2="314" y2="103" stroke="#1d2330" stroke-width="1.6" marker-end="url(#a4)"/>
+
+      <!-- ring -->
+      <rect x="576" y="70" width="134" height="56" rx="7" fill="#fcf1df" stroke="#b86e00"/>
+      <text x="643" y="90" text-anchor="middle" font-weight="700">output ring</text>
+      <text x="643" y="105" text-anchor="middle" font-size="9" fill="#5d6677">lock-free, SPSC</text>
+      <text x="643" y="118" text-anchor="middle" font-size="9" fill="#5d6677">pts markers</text>
+      <line x1="556" y1="104" x2="572" y2="100" stroke="#1d2330" stroke-width="1.6" marker-end="url(#a4)"/>
+
+      <!-- render -->
+      <rect x="576" y="150" width="134" height="62" rx="7" fill="#fbe7ec" stroke="#b8324f"/>
+      <text x="643" y="170" text-anchor="middle" font-weight="700">render()</text>
+      <text x="643" y="185" text-anchor="middle" font-size="9" fill="#5d6677">device real-time thread</text>
+      <text x="643" y="198" text-anchor="middle" font-size="9" fill="#5d6677">IOProc / WASAPI event</text>
+      <line x1="643" y1="126" x2="643" y2="146" stroke="#1d2330" stroke-width="1.6" marker-end="url(#a4)"/>
+      <rect x="576" y="236" width="134" height="40" rx="7" fill="#efe9fa" stroke="#6a44b8"/>
+      <text x="643" y="260" text-anchor="middle" font-weight="700">HDMI device</text>
+      <line x1="643" y1="212" x2="643" y2="232" stroke="#1d2330" stroke-width="1.6" marker-end="url(#a4)"/>
+
+      <!-- clock -->
+      <rect x="400" y="214" width="150" height="50" rx="7" fill="#fff" stroke="#2f5fd0" stroke-width="1.6"/>
+      <text x="475" y="234" text-anchor="middle" font-weight="700" fill="#2f5fd0">audio clock</text>
+      <text x="475" y="250" text-anchor="middle" font-size="9" fill="#5d6677">present time + latency</text>
+      <path d="M576,195 C540,198 520,202 510,210" fill="none" stroke="#2f5fd0" stroke-width="1.6" marker-end="url(#a4b)"/>
+
+      <!-- video thread -->
+      <rect x="318" y="282" width="150" height="60" rx="8" fill="#efe9fa" stroke="#6a44b8"/>
+      <text x="393" y="302" text-anchor="middle" font-weight="700">video thread</text>
+      <text x="393" y="317" text-anchor="middle" font-size="9" fill="#5d6677">hw decode via pcvb_*</text>
+      <text x="393" y="330" text-anchor="middle" font-size="9" fill="#5d6677">→ native frames</text>
+      <line x1="298" y1="297" x2="314" y2="303" stroke="#1d2330" stroke-width="1.6" marker-end="url(#a4)"/>
+      <rect x="486" y="296" width="70" height="30" rx="5" fill="#fff" stroke="#9aa3b2" stroke-dasharray="3,2"/>
+      <text x="521" y="315" text-anchor="middle" font-size="9">frame queue</text>
+      <line x1="468" y1="311" x2="482" y2="311" stroke="#1d2330" stroke-width="1.6" marker-end="url(#a4)"/>
+
+      <!-- presenter -->
+      <rect x="576" y="290" width="134" height="62" rx="7" fill="#e7eefc" stroke="#2f5fd0"/>
+      <text x="643" y="310" text-anchor="middle" font-weight="700">present thread</text>
+      <text x="643" y="325" text-anchor="middle" font-size="9" fill="#5d6677">show at clock − av_offset</text>
+      <text x="643" y="338" text-anchor="middle" font-size="9" fill="#5d6677">detects end of stream</text>
+      <line x1="556" y1="311" x2="572" y2="316" stroke="#1d2330" stroke-width="1.6" marker-end="url(#a4)"/>
+      <path d="M520,264 C540,282 570,288 590,288" fill="none" stroke="#2f5fd0" stroke-width="1.6" stroke-dasharray="4,3" marker-end="url(#a4b)"/>
+      <rect x="576" y="372" width="134" height="40" rx="7" fill="#e7eefc" stroke="#2f5fd0"/>
+      <text x="643" y="390" text-anchor="middle" font-weight="700">UI video sink</text>
+      <text x="643" y="404" text-anchor="middle" font-size="9" fill="#5d6677">video callback</text>
+      <line x1="643" y1="352" x2="643" y2="368" stroke="#1d2330" stroke-width="1.6" marker-end="url(#a4)"/>
+
+      <!-- vis tap -->
+      <rect x="318" y="372" width="238" height="44" rx="7" fill="#fff" stroke="#b86e00" stroke-dasharray="4,3"/>
+      <text x="437" y="390" text-anchor="middle" font-weight="700" fill="#b86e00">visualiser tap</text>
+      <text x="437" y="405" text-anchor="middle" font-size="9" fill="#5d6677">stereo float 48 kHz + pts; read for the current clock</text>
+      <path d="M330,186 C300,240 300,340 316,388" fill="none" stroke="#b86e00" stroke-width="1.4" stroke-dasharray="4,3" marker-end="url(#a4)"/>
+      <text x="20" y="410" font-size="9" fill="#5d6677">In passthrough, a copy is decoded</text>
+      <text x="20" y="422" font-size="9" fill="#5d6677">for the tap only while the visualiser is on.</text>
+    </g>
+  </svg>
+  <figcaption>Figure 4. Data flow. Black arrows are data; blue arrows are clock; dashed orange is the visualiser tap.</figcaption>
+  </figure>
+
+  <div class="cols">
+    <div class="why"><b>Why a lock-free ring?</b> <code>render()</code> runs on the OS's real-time audio thread. It must
+    never block on a lock held by a decoder, or the device underruns and the amp loses lock. Positions are atomics;
+    the ring is single-producer, single-consumer.</div>
+    <div class="why"><b>Why keep the output open?</b> Between files, the output is reused (<code>kept_out</code>)
+    when device, mode and burst size match. The amp stays locked to Dolby Digital, so the next track starts
+    without a dropout.</div>
+  </div>
+</section>
+
+<!-- ============================ 5. MODE DECISION ============================ -->
+<section class="page">
+  <h2>5 · Choosing what to send: the mode decision</h2>
+  <p>For each file the engine picks one of three output modes (<code>PCOutputMode</code>): <b>PCM</b> (shared mode),
+  <b>TRANSCODE</b> (decode and re-encode) or <b>PASSTHROUGH</b> (the source's own packets). The choice follows the user's
+  "Surround output" setting and the source track.</p>
+
+  <figure>
+  <svg viewBox="0 0 720 420">
+    <defs>
+      <marker id="a5" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1d2330"/></marker>
+    </defs>
+    <g font-size="10.5">
+      <rect x="290" y="6" width="140" height="30" rx="15" fill="#1d2330"/>
+      <text x="360" y="25" text-anchor="middle" fill="#fff" font-weight="700">Audio track opened</text>
+      <line x1="360" y1="36" x2="360" y2="52" stroke="#1d2330" stroke-width="1.5" marker-end="url(#a5)"/>
+
+      <polygon points="360,56 470,82 360,108 250,82" fill="#fbe7ec" stroke="#b8324f"/>
+      <text x="360" y="79" text-anchor="middle" font-weight="700" font-size="9.5">Output is HDMI / DP /</text>
+      <text x="360" y="92" text-anchor="middle" font-weight="700" font-size="9.5">offers compressed fmt?</text>
+      <line x1="250" y1="82" x2="150" y2="82" stroke="#1d2330" stroke-width="1.5" marker-end="url(#a5)"/>
+      <text x="200" y="76" text-anchor="middle" font-size="9">no</text>
+      <rect x="20" y="64" width="126" height="38" rx="6" fill="#eef0f4" stroke="#9aa3b2"/>
+      <text x="83" y="80" text-anchor="middle" font-weight="700">PCM (shared)</text>
+      <text x="83" y="94" text-anchor="middle" font-size="8.5" fill="#5d6677">never noise on speakers</text>
+      <line x1="360" y1="108" x2="360" y2="124" stroke="#1d2330" stroke-width="1.5" marker-end="url(#a5)"/>
+      <text x="370" y="120" font-size="9">yes</text>
+
+      <polygon points="360,128 470,154 360,180 250,154" fill="#fcf1df" stroke="#b86e00"/>
+      <text x="360" y="151" text-anchor="middle" font-weight="700" font-size="9.5">Surround output</text>
+      <text x="360" y="164" text-anchor="middle" font-weight="700" font-size="9.5">setting?</text>
+
+      <line x1="250" y1="154" x2="150" y2="154" stroke="#1d2330" stroke-width="1.5" marker-end="url(#a5)"/>
+      <text x="200" y="148" text-anchor="middle" font-size="9">Off</text>
+      <rect x="20" y="136" width="126" height="36" rx="6" fill="#eef0f4" stroke="#9aa3b2"/>
+      <text x="83" y="158" text-anchor="middle" font-weight="700">PCM (shared)</text>
+
+      <line x1="470" y1="154" x2="560" y2="154" stroke="#1d2330" stroke-width="1.5" marker-end="url(#a5)"/>
+      <text x="515" y="148" text-anchor="middle" font-size="9">Multichannel PCM</text>
+      <rect x="564" y="126" width="148" height="80" rx="6" fill="#e7eefc" stroke="#2f5fd0"/>
+      <text x="638" y="142" text-anchor="middle" font-weight="700" font-size="9.5">Native AC3/DTS → pass</text>
+      <text x="638" y="156" text-anchor="middle" font-weight="700" font-size="9.5">Multich. → exclusive PCM</text>
+      <text x="638" y="170" text-anchor="middle" font-size="8.5" fill="#5d6677">own layout & rate, bit-exact</text>
+      <text x="638" y="183" text-anchor="middle" font-size="8.5" fill="#5d6677">Stereo → shared PCM</text>
+      <text x="638" y="196" text-anchor="middle" font-size="8.5" fill="#5d6677">(Windows only, HDMI→AVR)</text>
+
+      <line x1="360" y1="180" x2="360" y2="200" stroke="#1d2330" stroke-width="1.5" marker-end="url(#a5)"/>
+      <text x="370" y="195" font-size="9">Dolby Digital or DTS</text>
+
+      <polygon points="360,204 460,228 360,252 260,228" fill="#fcf1df" stroke="#b86e00"/>
+      <text x="360" y="225" text-anchor="middle" font-weight="700" font-size="9.5">Source is stereo</text>
+      <text x="360" y="238" text-anchor="middle" font-weight="700" font-size="9.5">(or mono)?</text>
+      <line x1="260" y1="228" x2="150" y2="228" stroke="#1d2330" stroke-width="1.5" marker-end="url(#a5)"/>
+      <text x="205" y="220" text-anchor="middle" font-size="9">yes, and "encode</text><text x="205" y="242" text-anchor="middle" font-size="9">stereo" off</text>
+      <rect x="20" y="210" width="126" height="36" rx="6" fill="#eef0f4" stroke="#9aa3b2"/>
+      <text x="83" y="232" text-anchor="middle" font-weight="700">PCM (shared)</text>
+      <line x1="360" y1="252" x2="360" y2="272" stroke="#1d2330" stroke-width="1.5" marker-end="url(#a5)"/>
+      <text x="370" y="267" font-size="9">no (or stereo_bitstream on)</text>
+
+      <polygon points="360,276 470,302 360,328 250,302" fill="#fcf1df" stroke="#b86e00"/>
+      <text x="360" y="299" text-anchor="middle" font-weight="700" font-size="9.5">Can the track pass</text>
+      <text x="360" y="312" text-anchor="middle" font-weight="700" font-size="9.5">through untouched?</text>
+
+      <line x1="250" y1="302" x2="150" y2="340" stroke="#1d2330" stroke-width="1.5" marker-end="url(#a5)"/>
+      <text x="180" y="308" font-size="9">yes</text>
+      <rect x="10" y="330" width="230" height="80" rx="7" fill="#e2f4f0" stroke="#11806f"/>
+      <text x="125" y="348" text-anchor="middle" font-weight="700" fill="#11806f">PASSTHROUGH (bit-for-bit)</text>
+      <text x="125" y="364" text-anchor="middle" font-size="9" fill="#5d6677">AC3 48 kHz: in either mode</text>
+      <text x="125" y="378" text-anchor="middle" font-size="9" fill="#5d6677">DTS mode: also DTS 48 kHz and</text>
+      <text x="125" y="391" text-anchor="middle" font-size="9" fill="#5d6677">DTS-HD MA/HRA → core only</text>
+      <text x="125" y="404" text-anchor="middle" font-size="9" fill="#5d6677">(if passthrough setting is on)</text>
+
+      <line x1="470" y1="302" x2="560" y2="340" stroke="#1d2330" stroke-width="1.5" marker-end="url(#a5)"/>
+      <text x="530" y="308" font-size="9">no</text>
+      <rect x="470" y="330" width="242" height="80" rx="7" fill="#e7eefc" stroke="#2f5fd0"/>
+      <text x="591" y="348" text-anchor="middle" font-weight="700" fill="#2f5fd0">TRANSCODE</text>
+      <text x="591" y="364" text-anchor="middle" font-size="9" fill="#5d6677">AAC, FLAC, E-AC3, TrueHD, PCM, DTS Express,</text>
+      <text x="591" y="378" text-anchor="middle" font-size="9" fill="#5d6677">DTS in Dolby Digital mode…</text>
+      <text x="591" y="391" text-anchor="middle" font-size="9" fill="#5d6677">→ 48 kHz 5.1 → AC3 384/448/640 kb/s</text>
+      <text x="591" y="404" text-anchor="middle" font-size="9" fill="#5d6677">or DTS 1509.75 / 754.5 kb/s</text>
+    </g>
+  </svg>
+  <figcaption>Figure 5. Per-file decision. Any bitstream open that the device refuses falls back to decoded PCM.</figcaption>
+  </figure>
+
+  <div class="cols">
+    <div class="why"><b>Why does Dolby Digital mode transcode DTS?</b> Not every amp, and not every TV's optical
+    pass-through, handles DTS. AC3 is the safe common denominator, so DD mode turns everything into AC3.</div>
+    <div class="why"><b>Why is stereo PCM by default?</b> Stereo gains nothing from AC3, and encoding costs quality.
+    "Also encode stereo sources" exists for amps that drop audio for a moment when switching between PCM and a bitstream.</div>
+  </div>
+  <div class="note"><b>Fallbacks are real, not theoretical.</b> On the Windows PC, the Samsung's HDMI endpoint refuses the
+  IEC 61937 DTS subtype (its EDID lists no DTS), so DTS mode falls back to decoded PCM there. The back-end deliberately
+  has <i>no PCM-container fallback</i> for bitstreams; it fails the open and the engine chooses PCM.</div>
+</section>
+
+<!-- ============================ 6. RENDER ============================ -->
+<section class="page">
+  <h2>6 · The render callback: whole bursts and keep-alive silence</h2>
+  <p><code>render(ctx, dst, frames, present_ns)</code> in <code>pc_output.c</code> is the heart of the output. The OS calls it on
+  its real-time thread whenever it needs <code>frames</code> more samples. In bitstream mode it is a small state machine
+  that guarantees the receiver only ever sees complete bursts, real or silent.</p>
+
+  <figure>
+  <svg viewBox="0 0 720 270">
+    <defs>
+      <marker id="a6" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1d2330"/></marker>
+    </defs>
+    <g font-size="10.5">
+      <circle cx="360" cy="70" r="54" fill="#fcf1df" stroke="#b86e00" stroke-width="1.8"/>
+      <text x="360" y="66" text-anchor="middle" font-weight="700">BOUNDARY</text>
+      <text x="360" y="82" text-anchor="middle" font-size="9" fill="#5d6677">decide next burst</text>
+
+      <circle cx="140" cy="190" r="56" fill="#e2f4f0" stroke="#11806f" stroke-width="1.8"/>
+      <text x="140" y="186" text-anchor="middle" font-weight="700" fill="#11806f">REAL</text>
+      <text x="140" y="202" text-anchor="middle" font-size="9" fill="#5d6677">copy one burst</text>
+      <text x="140" y="214" text-anchor="middle" font-size="9" fill="#5d6677">from the ring</text>
+
+      <circle cx="580" cy="190" r="56" fill="#eef0f4" stroke="#5d6677" stroke-width="1.8"/>
+      <text x="580" y="186" text-anchor="middle" font-weight="700">SILENCE</text>
+      <text x="580" y="202" text-anchor="middle" font-size="9" fill="#5d6677">copy one encoded</text>
+      <text x="580" y="214" text-anchor="middle" font-size="9" fill="#5d6677">silence burst</text>
+
+      <path d="M310,92 C250,110 200,128 178,146" fill="none" stroke="#11806f" stroke-width="1.8" marker-end="url(#a6)"/>
+      <text x="222" y="108" text-anchor="end" font-size="9.5" fill="#11806f" font-weight="600">not paused and ≥ 1 whole</text>
+      <text x="222" y="121" text-anchor="end" font-size="9.5" fill="#11806f" font-weight="600">burst in the ring</text>
+      <path d="M196,186 C260,170 300,140 330,120" fill="none" stroke="#1d2330" stroke-width="1.4" marker-end="url(#a6)"/>
+      <text x="236" y="196" font-size="9" fill="#5d6677">burst complete / ring ran dry /</text>
+      <text x="236" y="208" font-size="9" fill="#5d6677">flush (seek) seen</text>
+
+      <path d="M410,92 C470,110 520,128 545,146" fill="none" stroke="#5d6677" stroke-width="1.8" marker-end="url(#a6)"/>
+      <text x="498" y="108" font-size="9.5" fill="#5d6677" font-weight="600">otherwise (paused, seeking,</text>
+      <text x="498" y="121" font-size="9.5" fill="#5d6677" font-weight="600">between tracks)</text>
+      <path d="M524,186 C460,170 420,140 392,120" fill="none" stroke="#1d2330" stroke-width="1.4" marker-end="url(#a6)"/>
+      <text x="418" y="200" font-size="9" fill="#5d6677">silence burst complete</text>
+
+      <text x="360" y="258" text-anchor="middle" font-size="9.5" fill="#5d6677">Switching only happens at BOUNDARY, so a burst is never cut in half, even if the OS asks for an odd number of frames.</text>
+    </g>
+  </svg>
+  <figcaption>Figure 6. Bitstream state machine in <code>render()</code> (BS_BOUNDARY / BS_REAL / BS_SILENCE).</figcaption>
+  </figure>
+
+  <h3>Timeline: pause and seek while playing Dolby Digital</h3>
+  <figure>
+  <svg viewBox="0 0 720 110">
+    <g font-size="9.5">
+      <g>
+        <rect x="10" y="30" width="56" height="34" fill="#11806f"/><rect x="66" y="30" width="56" height="34" fill="#11806f"/>
+        <rect x="122" y="30" width="56" height="34" fill="#11806f"/><rect x="178" y="30" width="56" height="34" fill="#9aa3b2"/>
+        <rect x="234" y="30" width="56" height="34" fill="#9aa3b2"/><rect x="290" y="30" width="56" height="34" fill="#9aa3b2"/>
+        <rect x="346" y="30" width="56" height="34" fill="#11806f"/><rect x="402" y="30" width="56" height="34" fill="#11806f"/>
+        <rect x="458" y="30" width="56" height="34" fill="#9aa3b2"/><rect x="514" y="30" width="56" height="34" fill="#9aa3b2"/>
+        <rect x="570" y="30" width="56" height="34" fill="#11806f"/><rect x="626" y="30" width="56" height="34" fill="#11806f"/>
+      </g>
+      <g stroke="#fff" stroke-width="2">
+        <line x1="66" y1="30" x2="66" y2="64"/><line x1="122" y1="30" x2="122" y2="64"/><line x1="178" y1="30" x2="178" y2="64"/>
+        <line x1="234" y1="30" x2="234" y2="64"/><line x1="290" y1="30" x2="290" y2="64"/><line x1="346" y1="30" x2="346" y2="64"/>
+        <line x1="402" y1="30" x2="402" y2="64"/><line x1="458" y1="30" x2="458" y2="64"/><line x1="514" y1="30" x2="514" y2="64"/>
+        <line x1="570" y1="30" x2="570" y2="64"/><line x1="626" y1="30" x2="626" y2="64"/>
+      </g>
+      <text x="94" y="22" text-anchor="middle" fill="#11806f" font-weight="700">playing</text>
+      <text x="262" y="22" text-anchor="middle" fill="#5d6677" font-weight="700">paused → silence bursts</text>
+      <text x="430" y="22" text-anchor="middle" fill="#11806f" font-weight="700">resumed</text>
+      <text x="514" y="22" text-anchor="middle" fill="#5d6677" font-weight="700">seek / refill</text>
+      <text x="654" y="22" text-anchor="middle" fill="#11806f" font-weight="700">new position</text>
+      <text x="360" y="84" text-anchor="middle" fill="#1d2330">The HDMI link never stops and never carries a partial burst → the amp shows "Dolby Digital" the whole time.</text>
+      <text x="360" y="100" text-anchor="middle" fill="#5d6677">Each block = one 6144-byte AC3 burst (32 ms). Green = real audio; grey = encoded silence in the same codec.</text>
+    </g>
+  </svg>
+  </figure>
+
+  <div class="why"><b>Why not just output zeros when paused?</b> Zeros aren't a valid IEC 61937 stream. The receiver
+  falls back to PCM, then needs time to re-detect Dolby Digital on resume, which clips the start of the audio and
+  makes the amp click between modes. Encoded silence keeps it locked.</div>
+  <p>A <b>flush</b> (seek) is signalled through an atomic generation counter: the writer advances a flush target,
+  <code>render()</code> notices the new generation, jumps its read position forward and finishes the current burst as
+  silence. No lock is ever taken on the real-time thread.</p>
+</section>
+
+<!-- ============================ 7. CLOCK ============================ -->
+<section class="page">
+  <h2>7 · The clock and A/V sync</h2>
+  <p><b>Audio is the master clock.</b> Video, the visualiser and the position display all follow what is actually
+  leaving the audio device. Because there is a ring buffer, device buffering and an amp that decodes AC3, "now" for the
+  listener is well behind what the decoder just produced.</p>
+
+  <figure>
+  <svg viewBox="0 0 720 250">
+    <defs>
+      <marker id="a7" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1d2330"/></marker>
+    </defs>
+    <g font-size="10">
+      <rect x="10" y="20" width="150" height="70" rx="7" fill="#e2f4f0" stroke="#11806f"/>
+      <text x="85" y="40" text-anchor="middle" font-weight="700">pc_out_write()</text>
+      <text x="85" y="56" text-anchor="middle" font-size="9" fill="#5d6677">burst + its source pts</text>
+      <text x="85" y="70" text-anchor="middle" font-size="9" fill="#5d6677">→ pts marker at</text>
+      <text x="85" y="82" text-anchor="middle" font-size="9" fill="#5d6677">ring byte position</text>
+
+      <rect x="200" y="20" width="150" height="70" rx="7" fill="#fbe7ec" stroke="#b8324f"/>
+      <text x="275" y="40" text-anchor="middle" font-weight="700">render()</text>
+      <text x="275" y="56" text-anchor="middle" font-size="9" fill="#5d6677">records (ring pos, len,</text>
+      <text x="275" y="70" text-anchor="middle" font-size="9" fill="#5d6677">present_ns) in a</text>
+      <text x="275" y="82" text-anchor="middle" font-size="9" fill="#5d6677">seqlock record</text>
+
+      <rect x="390" y="20" width="150" height="70" rx="7" fill="#e7eefc" stroke="#2f5fd0"/>
+      <text x="465" y="40" text-anchor="middle" font-weight="700">clock read</text>
+      <text x="465" y="56" text-anchor="middle" font-size="9" fill="#5d6677">pts at recorded pos +</text>
+      <text x="465" y="70" text-anchor="middle" font-size="9" fill="#5d6677">(now − present_ns − latency)</text>
+      <text x="465" y="82" text-anchor="middle" font-size="9" fill="#5d6677">= media time heard now</text>
+
+      <rect x="580" y="20" width="130" height="70" rx="7" fill="#efe9fa" stroke="#6a44b8"/>
+      <text x="645" y="40" text-anchor="middle" font-weight="700">presenter</text>
+      <text x="645" y="56" text-anchor="middle" font-size="9" fill="#5d6677">shows the frame</text>
+      <text x="645" y="70" text-anchor="middle" font-size="9" fill="#5d6677">whose pts ≤</text>
+      <text x="645" y="82" text-anchor="middle" font-size="9" fill="#5d6677">clock − av_offset</text>
+      <line x1="160" y1="55" x2="196" y2="55" stroke="#1d2330" stroke-width="1.5" marker-end="url(#a7)"/>
+      <line x1="350" y1="55" x2="386" y2="55" stroke="#1d2330" stroke-width="1.5" marker-end="url(#a7)"/>
+      <line x1="540" y1="55" x2="576" y2="55" stroke="#1d2330" stroke-width="1.5" marker-end="url(#a7)"/>
+
+      <!-- latency bar -->
+      <text x="10" y="128" font-weight="700">Where the delay comes from (left = decoder output, right = heard by the listener)</text>
+      <rect x="10" y="140" width="210" height="34" fill="#fcf1df" stroke="#b86e00"/>
+      <text x="115" y="161" text-anchor="middle">ring buffer (queued bursts)</text>
+      <rect x="220" y="140" width="130" height="34" fill="#fbe7ec" stroke="#b8324f"/>
+      <text x="285" y="161" text-anchor="middle">device buffer</text>
+      <rect x="350" y="140" width="150" height="34" fill="#efe9fa" stroke="#6a44b8"/>
+      <text x="425" y="161" text-anchor="middle">device + stream latency</text>
+      <rect x="500" y="140" width="210" height="34" fill="#e2f4f0" stroke="#11806f"/>
+      <text x="605" y="161" text-anchor="middle">TV + amp AC3 decode delay</text>
+      <text x="270" y="192" text-anchor="middle" font-size="9" fill="#2f5fd0">measured by the clock (present_ns + reported latency)</text>
+      <line x1="10" y1="198" x2="500" y2="198" stroke="#2f5fd0" stroke-width="1.5"/>
+      <text x="605" y="192" text-anchor="middle" font-size="9" fill="#b86e00">not visible to the PC</text>
+      <line x1="500" y1="198" x2="710" y2="198" stroke="#b86e00" stroke-width="1.5"/>
+      <text x="605" y="214" text-anchor="middle" font-size="9" fill="#b86e00">→ user's "Audio latency" setting (av_offset)</text>
+      <text x="360" y="240" text-anchor="middle" font-size="9.5" fill="#5d6677">present_ns is in pc_now_ns()'s timebase: mach host time on macOS, QueryPerformanceCounter on Windows.</text>
+    </g>
+  </svg>
+  <figcaption>Figure 7. The clock maps device timestamps back to media time through pts markers stored in the ring.</figcaption>
+  </figure>
+
+  <div class="why"><b>Why pts markers instead of counting samples?</b> In bitstream mode the ring holds IEC bursts, not
+  samples, and in passthrough the bursts come from the source's packets. Tagging ring byte positions with the source pts
+  works the same for PCM, transcode and passthrough, and survives seeks: a seek simply starts a new run of markers.</div>
+  <div class="why"><b>Why a seqlock?</b> The record is written on the real-time thread and read by the presenter and UI.
+  A seqlock lets the reader retry on a torn read, and the writer never waits.</div>
+  <p>The <b>visualiser tap</b> uses the same clock: decoded audio (stereo float, 48 kHz, with pts markers) is read
+  for the current clock position, so the visuals line up with what is audible, even while bitstreaming, and they follow
+  the Audio latency setting just like video.</p>
+</section>
+
+<!-- ============================ 8. BACKENDS ============================ -->
+<section class="page">
+  <h2>8 · Platform back-ends</h2>
+  <p>Each back-end implements one small interface. The audio contract (from <code>pc_audio_device.h</code>):
+  open the device in a format that carries the bursts untouched, call <code>render()</code> with a present time,
+  refuse outputs that would play bitstream as noise, and on close <b>undo everything</b> it changed.</p>
+
+  <table>
+    <tr><th style="width:22%">Concern</th><th style="width:26%">Kodi (WASAPI)</th><th style="width:26%">macOS (CoreAudio HAL)</th><th>Windows (WASAPI)</th></tr>
+    <tr><td>Exclusive access</td><td>Exclusive-mode stream</td><td><code>kAudioDevicePropertyHogMode</code></td><td>Exclusive mode, event-driven, 10 ms buffer</td></tr>
+    <tr><td>No mixer / effects</td><td>No mixer / APOs in exclusive</td><td><code>SupportsMixing = 0</code></td><td>Implied by exclusive mode</td></tr>
+    <tr><td>Bitstream format</td><td>WAVEFORMATEXTENSIBLE IEC 61937 subtype</td><td>Physical format <code>cac3</code> if offered, else 2 ch s16 48 kHz LPCM</td><td><code>KSDATAFORMAT_SUBTYPE_IEC61937_DOLBY_DIGITAL</code> / <code>_DTS</code>; no PCM-container fallback</td></tr>
+    <tr><td>Encoding</td><td>ActiveAE <code>ac3</code> encoder</td><td colspan="2">FFmpeg <code>ac3</code> (≤ 640 kb/s) or <code>dca</code> (DTS 1509.75 / 754.5 kb/s), shared core</td></tr>
+    <tr><td>Packing</td><td><code>CAEPackIEC61937</code></td><td colspan="2">FFmpeg <code>spdif</code> muxer, shared core</td></tr>
+    <tr><td>Keep-alive</td><td>Silence while paused</td><td colspan="2">Encoded silence bursts in <code>render()</code>, shared core</td></tr>
+    <tr><td>Hot-plug</td><td>—</td><td>Device list listener; reopen by UID, then by name</td><td><code>IMMNotificationClient</code> + invalidated-stream detection</td></tr>
+    <tr><td>Multichannel PCM</td><td>—</td><td>Refused for now → shared PCM</td><td><code>PC_STREAM_PCM_EXCLUSIVE</code>: source rate/48k × mask × s24-in-32 / s32 / s16 / float</td></tr>
+    <tr><td>Restore on close</td><td>—</td><td>Original physical format, mixing, hog; also on SIGINT/SIGTERM</td><td>Releasing the exclusive stream</td></tr>
+  </table>
+
+  <h3>Video</h3>
+  <figure>
+  <svg viewBox="0 0 720 150">
+    <defs><marker id="a8" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1d2330"/></marker></defs>
+    <g font-size="10">
+      <text x="10" y="18" font-weight="700">macOS</text>
+      <rect x="10" y="26" width="150" height="40" rx="6" fill="#e2f4f0" stroke="#11806f"/><text x="85" y="50" text-anchor="middle">FFmpeg + VideoToolbox</text>
+      <rect x="200" y="26" width="150" height="40" rx="6" fill="#efe9fa" stroke="#6a44b8"/><text x="275" y="50" text-anchor="middle">CVPixelBuffer (opaque)</text>
+      <rect x="390" y="26" width="150" height="40" rx="6" fill="#e7eefc" stroke="#2f5fd0"/><text x="465" y="50" text-anchor="middle">presenter (audio clock)</text>
+      <rect x="580" y="26" width="130" height="40" rx="6" fill="#e7eefc" stroke="#2f5fd0"/><text x="645" y="44" text-anchor="middle">AVSampleBuffer-</text><text x="645" y="57" text-anchor="middle">DisplayLayer</text>
+      <line x1="160" y1="46" x2="196" y2="46" stroke="#1d2330" stroke-width="1.4" marker-end="url(#a8)"/>
+      <line x1="350" y1="46" x2="386" y2="46" stroke="#1d2330" stroke-width="1.4" marker-end="url(#a8)"/>
+      <line x1="540" y1="46" x2="576" y2="46" stroke="#1d2330" stroke-width="1.4" marker-end="url(#a8)"/>
+
+      <text x="10" y="92" font-weight="700">Windows</text>
+      <rect x="10" y="100" width="150" height="40" rx="6" fill="#e2f4f0" stroke="#11806f"/><text x="85" y="118" text-anchor="middle">FFmpeg + D3D11VA</text><text x="85" y="131" text-anchor="middle" font-size="8.5" fill="#5d6677">on the UI's D3D11 device</text>
+      <rect x="200" y="100" width="150" height="40" rx="6" fill="#efe9fa" stroke="#6a44b8"/><text x="275" y="118" text-anchor="middle">NV12 / P010 slice</text><text x="275" y="131" text-anchor="middle" font-size="8.5" fill="#5d6677">or BGRA (software)</text>
+      <rect x="390" y="100" width="150" height="40" rx="6" fill="#e7eefc" stroke="#2f5fd0"/><text x="465" y="124" text-anchor="middle">presenter (audio clock)</text>
+      <rect x="580" y="100" width="130" height="40" rx="6" fill="#e7eefc" stroke="#2f5fd0"/><text x="645" y="118" text-anchor="middle">SwapChainPanel</text><text x="645" y="131" text-anchor="middle" font-size="8.5" fill="#5d6677">YUV→RGB shader</text>
+      <line x1="160" y1="120" x2="196" y2="120" stroke="#1d2330" stroke-width="1.4" marker-end="url(#a8)"/>
+      <line x1="350" y1="120" x2="386" y2="120" stroke="#1d2330" stroke-width="1.4" marker-end="url(#a8)"/>
+      <line x1="540" y1="120" x2="576" y2="120" stroke="#1d2330" stroke-width="1.4" marker-end="url(#a8)"/>
+    </g>
+  </svg>
+  <figcaption>Figure 8. Zero-copy video: hardware-decoded frames stay on the GPU until the UI draws them.</figcaption>
+  </figure>
+  <div class="why"><b>Why share the UI's D3D11 device?</b> <code>pc_set_d3d11_device</code> is called before open, so decoded
+  textures are created with SHADER_RESOURCE on the same device the UI renders with. The pixel shader samples them directly,
+  with no copy or cross-device sharing. The decoder pool is enlarged by 10 frames to cover the engine's frame queue.</div>
+  <p class="small">On the Windows test PC (GTX 970) there is no hardware HEVC, so HEVC decodes in software (1080p 10-bit keeps up);
+  the P010 texture path is untested for that reason.</p>
+</section>
+
+<!-- ============================ 9. APPS ============================ -->
+<section class="page">
+  <h2>9 · The apps, the visualiser and hot-plug</h2>
+  <p>Both apps are thin native shells over the engine with matching behaviour. The Windows app is a port of the Mac one
+  (<code>PlayerModel.cs</code> mirrors <code>PlayerModel.swift</code>, and settings use the same keys).</p>
+
+  <table>
+    <tr><th></th><th>macOS</th><th>Windows</th></tr>
+    <tr><td>UI</td><td>SwiftUI in an AppKit <code>NSWindow</code> + <code>NSHostingView</code></td><td>WinUI 3 (Windows App SDK 1.6, unpackaged), C# .NET 8</td></tr>
+    <tr><td>Engine binding</td><td>Direct C import via SwiftPM</td><td>P/Invoke into <code>playercore.dll</code>; struct layouts mirror <code>playercore.h</code></td></tr>
+    <tr><td>Visualiser</td><td>Metal, shaders compiled at runtime</td><td>D3D11 + HLSL, own device and SwapChainPanel</td></tr>
+    <tr><td>Settings</td><td>UserDefaults <code>local.surroundplayer</code></td><td>JSON in <code>%LOCALAPPDATA%\SurroundPlayer</code></td></tr>
+    <tr><td>Shortcuts</td><td>Space, arrows, ⌘←/→, F, V, [ ], L, Esc</td><td>Same, ⌘ → Ctrl; A cycles audio tracks</td></tr>
+    <tr><td>Distribution</td><td>arm64 / x86_64 / universal .app + zips, ad-hoc signed</td><td>One ~70 MB self-contained exe, unsigned</td></tr>
+  </table>
+
+  <h3>Design decisions worth knowing</h3>
+  <ul>
+    <li><b>The Mac app creates its own main window</b> in <code>applicationWillFinishLaunching</code>. A SwiftUI
+      <code>Window</code> scene doesn't create its window when the app is launched to open files (Finder "Open With").</li>
+    <li><b>Single-key shortcuts live in an event monitor, not menus</b>, so typing in the playlist search field isn't hijacked.</li>
+    <li><b>The visualiser overrides video</b> when on: video keeps decoding in sync but isn't drawn, so switching back is instant.</li>
+    <li><b>The 13 visualiser presets are original</b> (MilkDrop-2 style: feedback warp, waveforms and shapes, blur glow,
+      composite effects). projectM was considered and rejected; <code>.milk</code> files aren't loaded.
+      <code>--vis-snapshot &lt;dir&gt;</code> renders every preset to PNG; that's how both ports were checked to match.</li>
+    <li><b>The Windows single-file build uses its own obj/bin.</b> Sharing them with the normal build made the Windows App SDK
+      reuse the wrong reg-free WinRT manifest ("ClassFactory cannot supply requested class").</li>
+  </ul>
+
+  <h3>Hot-plug: the TV changes identity</h3>
+  <figure>
+  <svg viewBox="0 0 720 120">
+    <defs><marker id="a9" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1d2330"/></marker></defs>
+    <g font-size="10">
+      <rect x="10" y="30" width="120" height="54" rx="7" fill="#efe9fa" stroke="#6a44b8"/><text x="70" y="52" text-anchor="middle" font-weight="700">TV input or</text><text x="70" y="66" text-anchor="middle" font-weight="700">mode change</text>
+      <rect x="160" y="30" width="120" height="54" rx="7" fill="#fbe7ec" stroke="#b8324f"/><text x="220" y="52" text-anchor="middle" font-weight="700">EDID re-sent</text><text x="220" y="67" text-anchor="middle" font-size="8.5" fill="#5d6677">device vanishes</text>
+      <rect x="310" y="30" width="120" height="54" rx="7" fill="#fcf1df" stroke="#b86e00"/><text x="370" y="52" text-anchor="middle" font-weight="700">output lost</text><text x="370" y="67" text-anchor="middle" font-size="8.5" fill="#5d6677">pc_player_output_lost</text>
+      <rect x="460" y="30" width="120" height="54" rx="7" fill="#e7eefc" stroke="#2f5fd0"/><text x="520" y="50" text-anchor="middle" font-weight="700">find device</text><text x="520" y="64" text-anchor="middle" font-size="8.5" fill="#5d6677">by UID, else by name</text><text x="520" y="76" text-anchor="middle" font-size="8.5" fill="#5d6677">(UID may have changed)</text>
+      <rect x="610" y="30" width="100" height="54" rx="7" fill="#e2f4f0" stroke="#11806f"/><text x="660" y="52" text-anchor="middle" font-weight="700">reopen at</text><text x="660" y="66" text-anchor="middle" font-weight="700">position</text>
+      <line x1="130" y1="57" x2="156" y2="57" stroke="#1d2330" stroke-width="1.4" marker-end="url(#a9)"/>
+      <line x1="280" y1="57" x2="306" y2="57" stroke="#1d2330" stroke-width="1.4" marker-end="url(#a9)"/>
+      <line x1="430" y1="57" x2="456" y2="57" stroke="#1d2330" stroke-width="1.4" marker-end="url(#a9)"/>
+      <line x1="580" y1="57" x2="606" y2="57" stroke="#1d2330" stroke-width="1.4" marker-end="url(#a9)"/>
+      <text x="360" y="108" text-anchor="middle" font-size="9.5" fill="#5d6677">Seen on macOS: the Samsung's CoreAudio UID went …B471… → …B571… and its channel count 8 → 2. That's why the name is stored as a fallback.</text>
+    </g>
+  </svg>
+  </figure>
+</section>
+
+<!-- ============================ 10. BUILD & TEST ============================ -->
+<section class="page">
+  <h2>10 · Build, test and safety rules</h2>
+
+  <div class="cols">
+    <div>
+      <h3>macOS build</h3>
+      <ul>
+        <li>Command Line Tools only (no Xcode), Swift 6.1 in Swift 5 mode, macOS 14+.</li>
+        <li><code>scripts/build_app.sh</code>: per-arch <code>swift build --triple</code>, joined with <code>lipo</code>; fails if
+          anything outside /System or /usr/lib is linked (checked with <code>otool</code>).</li>
+        <li><code>scripts/build_ffmpeg.sh</code>: static, slim LGPL FFmpeg 9.0.2 per arch. Every demuxer and decoder;
+          only <code>ac3</code> + <code>dca</code> encoders and the <code>spdif</code> muxer.</li>
+        <li>An <code>OPTIONS</code> stamp (incl. a hash of the patches) triggers rebuilds.
+          SwiftPM doesn't track the static libs, so delete product binaries after rebuilding FFmpeg.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Windows build</h3>
+      <ul>
+        <li>VS 2022 Build Tools (clang-cl 19, CMake, Ninja) + MSYS2 for make/nasm and test tools.</li>
+        <li>clang-cl because the engine uses C11 <code>&lt;stdatomic.h&gt;</code> (incl. <code>_Atomic double</code>);
+          MSVC's C11 atomics are experimental.</li>
+        <li><code>build_ffmpeg_win.ps1</code>: MSVC static FFmpeg, /MT, d3d11va/dxva2, same patches.</li>
+        <li><code>build_win.ps1</code> builds <code>pcdump.exe</code>; <code>-App</code> the WinUI app; <code>-Package</code> the single exe.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>How correctness is checked</h3>
+  <figure>
+  <svg viewBox="0 0 720 150">
+    <defs><marker id="a10" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1d2330"/></marker></defs>
+    <g font-size="10">
+      <rect x="10" y="20" width="140" height="64" rx="7" fill="#fcf1df" stroke="#b86e00"/>
+      <text x="80" y="40" text-anchor="middle" font-weight="700">Test media</text>
+      <text x="80" y="55" text-anchor="middle" font-size="8.5" fill="#5d6677">a different tone</text>
+      <text x="80" y="67" text-anchor="middle" font-size="8.5" fill="#5d6677">on each channel</text>
+      <rect x="180" y="20" width="140" height="64" rx="7" fill="#e2f4f0" stroke="#11806f"/>
+      <text x="250" y="40" text-anchor="middle" font-weight="700">pcdump / pctest dump</text>
+      <text x="250" y="55" text-anchor="middle" font-size="8.5" fill="#5d6677">writes the exact output</text>
+      <text x="250" y="67" text-anchor="middle" font-size="8.5" fill="#5d6677">stream to a file</text>
+      <rect x="350" y="20" width="160" height="64" rx="7" fill="#e7eefc" stroke="#2f5fd0"/>
+      <text x="430" y="38" text-anchor="middle" font-weight="700">regress.sh checks</text>
+      <text x="430" y="52" text-anchor="middle" font-size="8.5" fill="#5d6677">ffprobe -f spdif: codec/layout</text>
+      <text x="430" y="64" text-anchor="middle" font-size="8.5" fill="#5d6677">burst spacing · per-channel tone</text>
+      <text x="430" y="76" text-anchor="middle" font-size="8.5" fill="#5d6677">cmp vs source (passthrough)</text>
+      <rect x="540" y="20" width="170" height="64" rx="7" fill="#11806f"/>
+      <text x="625" y="48" text-anchor="middle" font-weight="700" fill="#fff" font-size="12">ALL PASSED</text>
+      <text x="625" y="66" text-anchor="middle" font-size="8.5" fill="#d9f1eb">on macOS and Windows 11</text>
+      <line x1="150" y1="52" x2="176" y2="52" stroke="#1d2330" stroke-width="1.4" marker-end="url(#a10)"/>
+      <line x1="320" y1="52" x2="346" y2="52" stroke="#1d2330" stroke-width="1.4" marker-end="url(#a10)"/>
+      <line x1="510" y1="52" x2="536" y2="52" stroke="#1d2330" stroke-width="1.4" marker-end="url(#a10)"/>
+      <text x="360" y="112" text-anchor="middle" font-size="9.5" fill="#5d6677">No device is involved, so tones are safe here. Dumps are deterministic: before a refactor, dump every mode and cmp afterwards</text>
+      <text x="360" y="126" text-anchor="middle" font-size="9.5" fill="#5d6677">(that's how the core/back-end split was verified byte-identical).</text>
+    </g>
+  </svg>
+  </figure>
+
+  <ul>
+    <li><b><code>check_portable.sh</code></b> (macOS): builds the core with the stub back-ends and fails on any OS media header or symbol.</li>
+    <li><b><code>pctest devices | play</code></b>: headless playback on the real device with <code>--seek</code>, <code>--pause-at</code>, <code>--then</code>, <code>--debug</code>.</li>
+    <li><b>App debug:</b> <code>SURROUND_DEBUG</code> logs status (and on Windows <code>[trace …]</code> breadcrumbs);
+      <code>--vis-snapshot</code> renders the visualiser to PNG, since there are no screenshot permissions.</li>
+    <li><b>Memory bugs:</b> Guard Malloc on <code>pcdump</code> found the FFmpeg DTS encoder bug (below).</li>
+  </ul>
+
+  <div class="warn"><b>Never play audible test signals.</b> The TV is often the default output, and a test once played a 440 Hz
+  tone through it. Anything that reaches a real device uses <b>silent media</b> (<code>anullsrc</code>). The rule applies to
+  the Windows PC too. Success there is "the amp shows Dolby Digital, with no noise".</div>
+  <div class="warn"><b>Never bitstream to analogue outputs.</b> Back-ends must refuse IEC 61937 on speakers, headphones and
+  Bluetooth; only HDMI, DisplayPort, S/PDIF or devices advertising a compressed format qualify.</div>
+</section>
+
+<!-- ============================ 11. STATUS ============================ -->
+<section class="page">
+  <h2>11 · Status, limitations and next steps</h2>
+
+  <h3>Where things stand (17–18 Nov 2026)</h3>
+  <table>
+    <tr><th style="width:34%">Item</th><th style="width:14%">State</th><th>Notes</th></tr>
+    <tr><td>macOS app (Apple Silicon, Intel, universal)</td><td><span class="tag t-done">done</span></td><td>Complete; README has user docs.</td></tr>
+    <tr><td>Win step 1: core + stub back-ends + pcdump</td><td><span class="tag t-done">done</span></td><td><code>regress.sh</code> ALL PASSED on Windows 11.</td></tr>
+    <tr><td>Win step 2: WASAPI back-end</td><td><span class="tag t-done">working</span></td><td>AC3 transcode + passthrough exclusive IEC 61937 confirmed on the amp. DTS refused by the Samsung's EDID → PCM.</td></tr>
+    <tr><td>Hot-plug (Windows)</td><td><span class="tag t-wip">untested</span></td><td>Written; needs a real TV input switch during <code>pctest play … --seconds 90</code>.</td></tr>
+    <tr><td>Win step 3: D3D11VA video</td><td><span class="tag t-done">done</span></td><td>H.264 on GPU; HEVC software on GTX 970; P010 path untested.</td></tr>
+    <tr><td>Win step 4: WinUI 3 app (1.1.0)</td><td><span class="tag t-done">first version</span></td><td>Playback, playlist, search, settings, visualiser, single-exe packaging.</td></tr>
+    <tr><td>Start-up hangs (Windows)</td><td><span class="tag t-wip">open</span></td><td>3 hangs soon after rebuilds, then 22 clean starts. Antivirus suspected, not proven; trace breadcrumbs added.</td></tr>
+  </table>
+
+  <h3>Known limitations</h3>
+  <ul>
+    <li><b>DTS quality:</b> FFmpeg's DTS encoder is experimental. A local patch fixes an out-of-bounds LFE history read
+      (stock FFmpeg crashes ~1 in 12 runs). LFE still comes out ~2.8 dB low in the DTS path; cause not found.</li>
+    <li><b>Windows FFmpeg lacks zlib/bzlib:</b> PNG cover art and zlib-compressed MKV tracks need zlib.</li>
+    <li><b>Not on Windows yet:</b> HDR (PQ) tone mapping, proper cursor auto-hide.</li>
+    <li><b>Not implemented anywhere:</b> subtitles, gapless playback, playlist persistence, E-AC3/TrueHD/DTS-HD bitstreaming
+      to an HDMI AVR (the optical chain caps at AC3/DTS core anyway), notarization/signing.</li>
+    <li><b>Untested:</b> DTS-HD sources (no encoder to make test files); whether the Samsung forwards DTS over optical.</li>
+    <li>Multichannel PCM follows FFmpeg's default channel order, not the device's preferred layout.</li>
+  </ul>
+
+  <h3>Suggested next steps</h3>
+  <ol>
+    <li>Test Windows hot-plug with a real TV input change (silent file).</li>
+    <li>Add zlib to the Windows FFmpeg build before relying on artwork.</li>
+    <li>Watch for the start-up hang with <code>SURROUND_DEBUG</code> traces to confirm or rule out antivirus.</li>
+    <li>HDR tone mapping and cursor auto-hide on Windows; then playlist persistence on both.</li>
+  </ol>
+
+  <div class="note" style="margin-top:14px"><b>The one-sentence summary.</b> Surround Player takes exclusive control of an HDMI
+  output and streams Dolby Digital or DTS as IEC 61937 bursts, passed through or encoded on the fly. Portable C keeps the stream
+  unbroken (whole bursts, encoded silence, a reused output) and drives video from the audio device's own clock, so a TV with
+  only an optical link to the amp still delivers real 5.1.</div>
+</section>
+
+</body>
+</html>

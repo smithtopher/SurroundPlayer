@@ -1,7 +1,7 @@
 // pctest: command-line harness for PlayerCore.
 //   pctest devices
-//   pctest dump <media> <out.raw> [--pcm] [--dts [--dts-bitrate 1509|754]] [--stereo-ac3] [--bitrate N] [--no-passthrough]
-//   pctest play <media> [--device UID] [--pcm] [--seconds N] [--seek S]
+//   pctest dump <media> <out.raw> [--pcm] [--dts [--dts-bitrate 1509|754]] [--stereo-ac3] [--bitrate N] [--no-passthrough] [--mc-pcm]
+//   pctest play <media> [--device UID] [--pcm] [--mc-pcm] [--seconds N] [--seek S]
 import Foundation
 import PlayerCore
 
@@ -52,6 +52,7 @@ cfg.stereo_bitstream = flag("--stereo-ac3") ? 1 : 0
 cfg.passthrough = flag("--no-passthrough") ? 0 : 1
 cfg.audio_track = Int32(value("--track") ?? "-1") ?? -1
 cfg.start_position = Double(value("--start") ?? "0") ?? 0
+cfg.multichannel_pcm = flag("--mc-pcm") ? 1 : 0   // untranscoded multichannel PCM (exclusive)
 
 if flag("--vis") { pc_player_set_vis_enabled(player, 1) }
 let dumpPath = args[1] == "dump" ? (args.count > 3 ? args[3] : "out.raw") : nil

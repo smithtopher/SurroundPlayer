@@ -224,10 +224,16 @@ struct ControlsBar: View {
                                     if i == model.currentAudioTrack { Label(name, systemImage: "checkmark") } else { Text(name) }
                                 }
                             }
-                        } label: { Image(systemName: "waveform") }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "waveform")
+                                Text(model.currentAudioTrackLabel).font(.caption).lineLimit(1).truncationMode(.tail)
+                                    .frame(maxWidth: 220, alignment: .leading)
+                            }
+                        }
                             .menuStyle(.borderlessButton)
                             .fixedSize()
-                            .help("Audio track")
+                            .help("Audio track (A: next track)")
                     }
                     OutputBadge()
                 }
@@ -248,7 +254,7 @@ struct OutputBadge: View {
     var body: some View {
         if model.outputMode >= 0 {
             Button { showDetails.toggle() } label: {
-                Text(model.isBitstreaming ? (model.bitstreamCodecName.isEmpty ? "BITSTREAM" : model.bitstreamCodecName.uppercased()) : "PCM")
+                Text(model.isBitstreaming ? (model.bitstreamCodecName.isEmpty ? "BITSTREAM" : model.bitstreamCodecName.uppercased()) : model.pcmBadge)
                     .font(.system(size: 10, weight: .bold, design: .rounded))
                     .padding(.horizontal, 6).padding(.vertical, 3)
                     .foregroundStyle(model.isBitstreaming ? Color.white : Color.primary)

@@ -17,6 +17,20 @@ struct SurroundPlayerApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("Open…") { model.showOpenPanel() }
                     .keyboardShortcut("o")
+                Menu("Open Recent") {
+                    ForEach(model.recentURLs, id: \.self) { url in
+                        Button { model.openRecent(url) } label: {
+                            Label {
+                                Text(model.recentTitle(url))
+                            } icon: {
+                                Image(nsImage: menuIcon(url))
+                            }
+                        }
+                    }
+                    if !model.recentURLs.isEmpty { Divider() }
+                    Button("Clear Menu") { model.clearRecents() }
+                        .disabled(model.recentURLs.isEmpty)
+                }
             }
             CommandMenu("Playback") {
                 // Single keys (Space, arrows, F, V, [, ], L) are handled by the player
@@ -29,6 +43,9 @@ struct SurroundPlayerApp: App {
                 Button("Back 10 s  (←)") { model.skip(-10) }
                 Button("Forward 1 min  (↑)") { model.skip(60) }
                 Button("Back 1 min  (↓)") { model.skip(-60) }
+                Divider()
+                Button("Next Audio Track  (A)") { model.cycleAudioTrack() }
+                    .disabled(model.audioTracks.count < 2)
                 Divider()
                 Button("Stop") { model.stop() }
                     .keyboardShortcut(".", modifiers: .command)
@@ -126,4 +143,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Releases hog mode and restores the device's original format.
         MainActor.assumeIsolated { PlayerModel.shared.shutdown() }
     }
+}
+
+/// Finder icon for a menu item (icon(forFile:) returns a fresh 32 pt image each call).
+@MainActor private func menuIcon(_ url: URL) -> NSImage {
+    let img = NSWorkspace.shared.icon(forFile: url.path)
+    img.size = NSSize(width: 16, height: 16)
+    return img
 }

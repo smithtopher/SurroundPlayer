@@ -35,6 +35,7 @@ let package = Package(
                 .linkedFramework("CoreAudio"), .linkedFramework("CoreVideo"),
                 .linkedFramework("CoreFoundation"), .linkedFramework("VideoToolbox"),
                 .linkedFramework("CoreMedia"), .linkedFramework("CoreServices"),
+                .linkedFramework("AudioToolbox"),   // channel layout tags (multichannel PCM)
             ]
         ),
         .executableTarget(

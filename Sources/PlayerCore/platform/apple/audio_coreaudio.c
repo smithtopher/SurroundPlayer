@@ -9,13 +9,21 @@
 //   4. ask for a virtual format identical to the physical one, so IOProc buffers
 //      reach the hardware unconverted (pc_output.c handles int16/int32/float buffers)
 //   5. on close restore the original format, mixing and release hog mode.
+//
+// Multichannel PCM path (PC_STREAM_PCM_EXCLUSIVE, decoded surround untouched, for HDMI
+// into an AV receiver): the same hog / no-mixing steps, then an N-channel LPCM physical
+// format at the source rate (else 48 kHz) and a float virtual format of the same shape.
+// The device's preferred channel layout says which speaker each channel feeds; the
+// engine gets the matching speaker mask and the IOProc puts every channel in its slot.
 #if defined(__APPLE__) && !defined(PC_STUB_BACKENDS)
 
 #include "../../pc_audio_device.h"
 #include "../../pc_platform.h"
 
 #include <CoreAudio/CoreAudio.h>
+#include <AudioToolbox/AudioFormat.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +39,12 @@ struct PCAudioDevice {
     int bytes_per_frame;
     PCRenderCallback cb;
     void *ctx;
+    // multichannel PCM: device channel k plays engine channel perm[k] (-1 = silence)
+    int remap, dev_channels, eng_channels, sample_bytes;
+    int perm[32];
+    uint8_t *tmp;               // engine-order frames, rendered before the scatter
+    int tmp_frames;
+    double rate;
 };
 
 // ---------------------------------------------------------------------------
@@ -226,6 +240,262 @@ static void fourcc_str(UInt32 id, char out[5]) {
 }
 
 // ---------------------------------------------------------------------------
+// exclusive access (bitstream and multichannel PCM)
+
+// Hog mode + mixing off: no other client, and the HAL does no mixing / volume / dither.
+static int take_exclusive(PCAudioDevice *d, const char *name, char *err, int errlen) {
+    pid_t hog = -1;
+    getp(d->dev, kAudioDevicePropertyHogMode, kAudioObjectPropertyScopeGlobal, sizeof(hog), &hog);
+    if (hog != -1 && hog != getpid()) {
+        snprintf(err, errlen, "'%s' is in exclusive use by another application (pid %d)", name, hog);
+        return -1;
+    }
+    if (hog != getpid()) {
+        pid_t me = getpid();
+        if (setp(d->dev, kAudioDevicePropertyHogMode, kAudioObjectPropertyScopeGlobal, sizeof(me), &me) == noErr)
+            d->hogged = 1;
+    }
+    AudioObjectPropertyAddress ma = addr(kAudioDevicePropertySupportsMixing, kAudioObjectPropertyScopeGlobal);
+    Boolean settable = false;
+    if (AudioObjectHasProperty(d->dev, &ma) && AudioObjectIsPropertySettable(d->dev, &ma, &settable) == noErr && settable) {
+        UInt32 mix = 0;
+        if (setp(d->dev, kAudioDevicePropertySupportsMixing, kAudioObjectPropertyScopeGlobal, sizeof(mix), &mix) == noErr)
+            d->mixing_changed = 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// multichannel PCM: format and channel layout
+
+static int range_has(const AudioStreamRangedDescription *r, double rate) {
+    if (r->mFormat.mSampleRate == rate) return 1;
+    return r->mSampleRateRange.mMinimum <= rate && r->mSampleRateRange.mMaximum >= rate;
+}
+
+// Score a physical format for `ch` channels of PCM at `rate` (falling back to 48 kHz);
+// higher is better, <0 unusable. *use_rate gets the rate to run at.
+static int score_pcm_format(const AudioStreamRangedDescription *r, int ch, double rate, double *use_rate) {
+    const AudioStreamBasicDescription *f = &r->mFormat;
+    if (f->mFormatID != kAudioFormatLinearPCM || (f->mFormatFlags & kAudioFormatFlagIsNonInterleaved)) return -1;
+    int n = (int)f->mChannelsPerFrame;
+    if (n < ch || n > 32) return -1;
+    int sc;
+    if (range_has(r, rate)) { sc = 2000; *use_rate = rate; }
+    else if (range_has(r, 48000.0)) { sc = 1000; *use_rate = 48000.0; }
+    else return -1;
+    sc -= (n - ch) * 50;                                    // exact channel count first
+    int fl = (f->mFormatFlags & kAudioFormatFlagIsFloat) != 0;
+    if (!fl && (f->mBitsPerChannel == 24 || f->mBitsPerChannel == 32)) sc += 30;
+    else if (fl && f->mBitsPerChannel == 32) sc += 25;
+    else if (!fl && f->mBitsPerChannel == 16) sc += 10;
+    else return -1;
+    return sc;
+}
+
+// CoreAudio channel label -> WAVE SPEAKER_* / FFmpeg AV_CH_* bit (0: none)
+static uint32_t label_bit(AudioChannelLabel l) {
+    switch (l) {
+    case kAudioChannelLabel_Left: return 0x1;
+    case kAudioChannelLabel_Right: return 0x2;
+    case kAudioChannelLabel_Center: case kAudioChannelLabel_Mono: return 0x4;
+    case kAudioChannelLabel_LFEScreen: return 0x8;
+    case kAudioChannelLabel_RearSurroundLeft: return 0x10;     // back left
+    case kAudioChannelLabel_RearSurroundRight: return 0x20;
+    case kAudioChannelLabel_LeftCenter: return 0x40;
+    case kAudioChannelLabel_RightCenter: return 0x80;
+    case kAudioChannelLabel_CenterSurround: return 0x100;
+    case kAudioChannelLabel_LeftSurround: case kAudioChannelLabel_LeftSurroundDirect: return 0x200;   // side left
+    case kAudioChannelLabel_RightSurround: case kAudioChannelLabel_RightSurroundDirect: return 0x400;
+    case kAudioChannelLabel_TopCenterSurround: return 0x800;
+    case kAudioChannelLabel_VerticalHeightLeft: return 0x1000;
+    case kAudioChannelLabel_VerticalHeightCenter: return 0x2000;
+    case kAudioChannelLabel_VerticalHeightRight: return 0x4000;
+    case kAudioChannelLabel_TopBackLeft: return 0x8000;
+    case kAudioChannelLabel_TopBackCenter: return 0x10000;
+    case kAudioChannelLabel_TopBackRight: return 0x20000;
+    default: return 0;
+    }
+}
+
+// Speaker bit of each of the first n channels of `lay` (descriptions, bitmap or a tag).
+// Returns the number of channels with a known speaker (0: layout unknown).
+static int layout_speakers(const AudioChannelLayout *lay, UInt32 size, int n, uint32_t *bits) {
+    memset(bits, 0, sizeof(*bits) * (size_t)n);
+    AudioChannelLayout *expanded = NULL;
+    if (lay->mChannelLayoutTag != kAudioChannelLayoutTag_UseChannelDescriptions &&
+        lay->mChannelLayoutTag != kAudioChannelLayoutTag_UseChannelBitmap) {
+        // a layout tag (e.g. MPEG 5.1 A): expand it to per-channel descriptions
+        AudioChannelLayoutTag tag = lay->mChannelLayoutTag;
+        UInt32 esz = 0;
+        if (AudioFormatGetPropertyInfo(kAudioFormatProperty_ChannelLayoutForTag, sizeof(tag), &tag, &esz) != noErr || !esz) return 0;
+        expanded = malloc(esz);
+        if (AudioFormatGetProperty(kAudioFormatProperty_ChannelLayoutForTag, sizeof(tag), &tag, &esz, expanded) != noErr) {
+            free(expanded);
+            return 0;
+        }
+        lay = expanded;
+        size = esz;
+    }
+    uint32_t used = 0;
+    int known = 0;
+    // (an expanded tag keeps its tag but carries the descriptions)
+    if (expanded || lay->mChannelLayoutTag == kAudioChannelLayoutTag_UseChannelDescriptions) {
+        UInt32 nd = lay->mNumberChannelDescriptions;
+        if (size < offsetof(AudioChannelLayout, mChannelDescriptions) + nd * sizeof(AudioChannelDescription)) nd = 0;
+        for (int i = 0; i < n && i < (int)nd; i++) {
+            uint32_t b = label_bit(lay->mChannelDescriptions[i].mChannelLabel);
+            if (b && !(used & b)) { bits[i] = b; used |= b; known++; }
+        }
+    } else if (lay->mChannelLayoutTag == kAudioChannelLayoutTag_UseChannelBitmap) {
+        int i = 0;   // channels in bitmap order; kAudioChannelBit_X == 1 << (kAudioChannelLabel_X - 1)
+        for (int k = 0; k < 18 && i < n; k++) {
+            if (!(lay->mChannelBitmap & (1u << k))) continue;
+            uint32_t b = label_bit((AudioChannelLabel)(k + 1));
+            if (b && !(used & b)) { bits[i] = b; used |= b; known++; }
+            i++;
+        }
+    }
+    free(expanded);
+    return known;
+}
+
+static int device_speakers(AudioDeviceID dev, int n, uint32_t *bits) {
+    UInt32 size = 0;
+    AudioChannelLayout *lay = getp_alloc(dev, kAudioDevicePropertyPreferredChannelLayout, kAudioObjectPropertyScopeOutput, &size);
+    if (!lay) { memset(bits, 0, sizeof(*bits) * (size_t)n); return 0; }
+    int known = layout_speakers(lay, size, n, bits);
+    free(lay);
+    return known;
+}
+
+static int popcount32(uint32_t v) { int n = 0; while (v) { n += v & 1; v >>= 1; } return n; }
+
+// The engine renders channels in ascending speaker-bit order (WAVE / FFmpeg native order);
+// device channel i plays engine channel perm[i] (-1: no speaker, silence). Returns the mask.
+static uint32_t speaker_perm(const uint32_t *bits, int nch, int *perm, int *identity) {
+    uint32_t mask = 0;
+    for (int i = 0; i < nch; i++) mask |= bits[i];
+    *identity = 1;
+    for (int i = 0; i < nch; i++) {
+        if (!bits[i]) { perm[i] = -1; *identity = 0; continue; }
+        perm[i] = popcount32(mask & (bits[i] - 1));      // rank in ascending speaker order
+        if (perm[i] != i) *identity = 0;
+    }
+    return mask;
+}
+
+// Opens the multichannel PCM stream. `req` (channels, rate, channel_mask) comes from
+// the engine; on success fmt describes what the engine must render.
+static int open_pcm_exclusive(PCAudioDevice *d, const PCDeviceFormat *req, PCDeviceFormat *fmt,
+                              const char *name, UInt32 transport, char *err, int errlen) {
+    if (take_exclusive(d, name, err, errlen) != 0) return -1;
+    UInt32 size = 0;
+    AudioStreamRangedDescription *fmts = getp_alloc(d->stream, kAudioStreamPropertyAvailablePhysicalFormats, kAudioObjectPropertyScopeGlobal, &size);
+    int best = -1, best_score = -1;
+    double best_rate = 0;
+    for (UInt32 i = 0; fmts && i < size / sizeof(*fmts); i++) {
+        double r = 0;
+        int sc = score_pcm_format(&fmts[i], req->channels, req->rate, &r);
+        if (sc > best_score) { best_score = sc; best = (int)i; best_rate = r; }
+    }
+    if (best < 0) {
+        free(fmts);
+        snprintf(err, errlen, "'%s' offers no %d-channel PCM format", name, req->channels);
+        return -1;
+    }
+    AudioStreamBasicDescription want = fmts[best].mFormat;
+    free(fmts);
+    want.mSampleRate = best_rate;
+    if (set_physical_format(d->stream, &want) != 0) {
+        snprintf(err, errlen, "Could not switch '%s' to %u-channel PCM at %.0f Hz", name, (unsigned)want.mChannelsPerFrame, best_rate);
+        return -1;
+    }
+    d->phys_changed = !same_format(&want, &d->orig_phys);
+    Float64 sr = best_rate;
+    setp(d->dev, kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal, sizeof(sr), &sr);
+
+    // float virtual format of the same shape (exact for 16/24-bit sources); else the physical one
+    int nch = (int)want.mChannelsPerFrame;
+    AudioStreamBasicDescription vf = { 0 };
+    vf.mSampleRate = best_rate;
+    vf.mFormatID = kAudioFormatLinearPCM;
+    vf.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
+    vf.mChannelsPerFrame = (UInt32)nch;
+    vf.mBitsPerChannel = 32;
+    vf.mBytesPerFrame = vf.mBytesPerPacket = (UInt32)nch * 4;
+    vf.mFramesPerPacket = 1;
+    if (setp(d->stream, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal, sizeof(vf), &vf) == noErr) d->virt_changed = 1;
+    AudioStreamBasicDescription virt;
+    getp(d->stream, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal, sizeof(virt), &virt);
+    int vfloat = (virt.mFormatFlags & kAudioFormatFlagIsFloat) != 0;
+    int vbytes = virt.mChannelsPerFrame ? (int)(virt.mBytesPerFrame / virt.mChannelsPerFrame) : 0;
+    int ok = virt.mFormatID == kAudioFormatLinearPCM && !(virt.mFormatFlags & kAudioFormatFlagIsNonInterleaved) &&
+             (int)virt.mChannelsPerFrame == nch && virt.mSampleRate == best_rate &&
+             (vfloat ? virt.mBitsPerChannel == 32 && vbytes == 4 : (vbytes == 2 && virt.mBitsPerChannel == 16) || vbytes == 4);
+    if (!ok && setp(d->stream, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal, sizeof(want), &want) == noErr) {
+        d->virt_changed = 1;
+        getp(d->stream, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal, sizeof(virt), &virt);
+        vfloat = (virt.mFormatFlags & kAudioFormatFlagIsFloat) != 0;
+        vbytes = virt.mChannelsPerFrame ? (int)(virt.mBytesPerFrame / virt.mChannelsPerFrame) : 0;
+        ok = virt.mFormatID == kAudioFormatLinearPCM && !(virt.mFormatFlags & kAudioFormatFlagIsNonInterleaved) &&
+             (int)virt.mChannelsPerFrame == nch && (vfloat ? vbytes == 4 : vbytes == 2 || vbytes == 4);
+    }
+    // the engine writes full-scale int32: 24 valid bits must sit in the high bytes
+    if (ok && !vfloat && vbytes == 4 && virt.mBitsPerChannel < 32 && !(virt.mFormatFlags & kAudioFormatFlagIsAlignedHigh)) ok = 0;
+    if (!ok) {
+        snprintf(err, errlen, "Unsupported stream format on '%s' (%u ch, %u bit)", name,
+                 (unsigned)virt.mChannelsPerFrame, (unsigned)virt.mBitsPerChannel);
+        return -1;
+    }
+
+    // which speaker each device channel feeds -> the mask the engine renders, plus the scatter
+    uint32_t bits[32];
+    int known = device_speakers(d->dev, nch, bits);
+    if (known == 0) {
+        // layout unknown: assume the device takes the source's own order
+        if (nch != req->channels || popcount32(req->channel_mask) != req->channels) {
+            snprintf(err, errlen, "'%s' doesn't report its speaker layout", name);
+            return -1;
+        }
+        uint32_t m = req->channel_mask;
+        for (int i = 0; i < nch; i++) { bits[i] = m & (~m + 1); m &= m - 1; }
+    }
+    int identity;
+    uint32_t mask = speaker_perm(bits, nch, d->perm, &identity);
+    d->dev_channels = nch;
+    d->eng_channels = popcount32(mask);
+    d->sample_bytes = vbytes;
+    d->rate = best_rate;
+    if (!identity || d->eng_channels != nch) {
+        d->remap = 1;
+        d->tmp_frames = 4096;
+        d->tmp = malloc((size_t)d->tmp_frames * (size_t)d->eng_channels * (size_t)vbytes);
+    }
+    fmt->channels = d->eng_channels;
+    fmt->channel_mask = mask;
+    fmt->rate = best_rate;
+    fmt->is_float = vfloat;
+    fmt->bits = vbytes * 8;
+    d->bytes_per_frame = nch * vbytes;      // device frame (the IOProc's buffer)
+
+    char order[160] = "";
+    static const char *spk[] = { "L", "R", "C", "LFE", "Lb", "Rb", "Lc", "Rc", "Cb", "Ls", "Rs", "Tc",
+                                 "Tfl", "Tfc", "Tfr", "Tbl", "Tbc", "Tbr" };
+    for (int i = 0; i < nch; i++) {
+        int b = bits[i] ? __builtin_ctz(bits[i]) : -1;
+        size_t len = strlen(order);
+        snprintf(order + len, sizeof(order) - len, "%s%s", i ? " " : "", b >= 0 && b < 18 ? spk[b] : "-");
+    }
+    snprintf(fmt->description, sizeof(fmt->description),
+             "%s (%s), exclusive%s, physical LPCM %d ch %u-bit %.0f Hz, IOProc %s%d, channels %s%s",
+             name, transport_name(transport), d->hogged ? "" : " (hog mode unavailable!)", nch,
+             (unsigned)want.mBitsPerChannel, best_rate, vfloat ? "float" : "int", vbytes * 8, order,
+             known ? "" : " (assumed)");
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 // IOProc
 
 static OSStatus ioproc(AudioObjectID dev, const AudioTimeStamp *now, const AudioBufferList *in,
@@ -237,7 +507,28 @@ static OSStatus ioproc(AudioObjectID dev, const AudioTimeStamp *now, const Audio
     if (d->stream_buffer >= (int)out->mNumberBuffers) return noErr;
     AudioBuffer *b = &out->mBuffers[d->stream_buffer];
     uint64_t host = (outtime->mFlags & kAudioTimeStampHostTimeValid) ? outtime->mHostTime : now->mHostTime;
-    d->cb(d->ctx, b->mData, (int)(b->mDataByteSize / d->bytes_per_frame), (int64_t)AudioConvertHostTimeToNanos(host));
+    int64_t present = (int64_t)AudioConvertHostTimeToNanos(host);
+    int frames = (int)(b->mDataByteSize / d->bytes_per_frame);
+    if (!d->remap) {
+        d->cb(d->ctx, b->mData, frames, present);
+        return noErr;
+    }
+    // multichannel PCM in a different speaker order: render in engine order, then scatter
+    uint8_t *dst = b->mData;
+    int sb = d->sample_bytes, done = 0;
+    while (done < frames) {
+        int n = frames - done < d->tmp_frames ? frames - done : d->tmp_frames;
+        d->cb(d->ctx, d->tmp, n, present + (int64_t)((double)done * 1e9 / d->rate));
+        for (int f = 0; f < n; f++) {
+            const uint8_t *src = d->tmp + (size_t)f * (size_t)d->eng_channels * (size_t)sb;
+            uint8_t *out = dst + ((size_t)(done + f) * (size_t)d->dev_channels) * (size_t)sb;
+            for (int c = 0; c < d->dev_channels; c++) {
+                if (d->perm[c] >= 0) memcpy(out + c * sb, src + d->perm[c] * sb, (size_t)sb);
+                else memset(out + c * sb, 0, (size_t)sb);
+            }
+        }
+        done += n;
+    }
     return noErr;
 }
 
@@ -260,11 +551,8 @@ static void restore_device(PCAudioDevice *d) {
 }
 
 PCAudioDevice *pcad_open(const char *uid, PCStreamType type, PCDeviceFormat *fmt, char *err, int errlen) {
-    if (type == PC_STREAM_PCM_EXCLUSIVE) {   // not implemented on macOS: the engine falls back to shared PCM
-        snprintf(err, errlen, "Exclusive multichannel PCM is not supported on macOS yet");
-        return NULL;
-    }
-    int bitstream = type != PC_STREAM_PCM;   // the digital format carries AC3 and DTS alike
+    int bitstream = type == PC_STREAM_IEC61937_AC3 || type == PC_STREAM_IEC61937_DTS;   // one digital format carries both
+    PCDeviceFormat req = *fmt;      // PC_STREAM_PCM_EXCLUSIVE: the request
     PCAudioDevice *d = calloc(1, sizeof(*d));
     memset(fmt, 0, sizeof(*fmt));
     d->dev = device_for_uid(uid);
@@ -278,7 +566,10 @@ PCAudioDevice *pcad_open(const char *uid, PCStreamType type, PCDeviceFormat *fmt
     getp(d->stream, kAudioStreamPropertyPhysicalFormat, kAudioObjectPropertyScopeGlobal, sizeof(d->orig_phys), &d->orig_phys);
     getp(d->stream, kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal, sizeof(d->orig_virt), &d->orig_virt);
 
-    if (bitstream) {
+    if (type == PC_STREAM_PCM_EXCLUSIVE) {
+        if (req.channels < 1 || req.channels > 32 || req.rate <= 0) { snprintf(err, errlen, "Bad PCM request"); goto fail; }
+        if (open_pcm_exclusive(d, &req, fmt, name, transport, err, errlen) != 0) goto fail;
+    } else if (bitstream) {
         // Never send IEC 61937 to something that would play it as PCM noise
         // (speakers, headphones, Bluetooth): only HDMI/DisplayPort or devices
         // that advertise a compressed format (optical / S/PDIF interfaces).
@@ -288,26 +579,8 @@ PCAudioDevice *pcad_open(const char *uid, PCStreamType type, PCDeviceFormat *fmt
             snprintf(err, errlen, "'%s' is not a digital (HDMI/optical) output", name);
             goto fail;
         }
-        // 1. exclusive access
-        pid_t hog = -1;
-        getp(d->dev, kAudioDevicePropertyHogMode, kAudioObjectPropertyScopeGlobal, sizeof(hog), &hog);
-        if (hog != -1 && hog != getpid()) {
-            snprintf(err, errlen, "'%s' is in exclusive use by another application (pid %d)", name, hog);
-            goto fail;
-        }
-        if (hog != getpid()) {
-            pid_t me = getpid();
-            if (setp(d->dev, kAudioDevicePropertyHogMode, kAudioObjectPropertyScopeGlobal, sizeof(me), &me) == noErr)
-                d->hogged = 1;
-        }
-        // 2. no mixing -> the HAL passes our integer samples straight through
-        AudioObjectPropertyAddress ma = addr(kAudioDevicePropertySupportsMixing, kAudioObjectPropertyScopeGlobal);
-        Boolean settable = false;
-        if (AudioObjectHasProperty(d->dev, &ma) && AudioObjectIsPropertySettable(d->dev, &ma, &settable) == noErr && settable) {
-            UInt32 mix = 0;
-            if (setp(d->dev, kAudioDevicePropertySupportsMixing, kAudioObjectPropertyScopeGlobal, sizeof(mix), &mix) == noErr)
-                d->mixing_changed = 1;
-        }
+        // 1 + 2. exclusive access, no mixing -> the HAL passes our integer samples straight through
+        if (take_exclusive(d, name, err, errlen) != 0) goto fail;
         // 3. choose a physical format that can carry IEC 61937
         UInt32 size = 0;
         AudioStreamRangedDescription *fmts = getp_alloc(d->stream, kAudioStreamPropertyAvailablePhysicalFormats, kAudioObjectPropertyScopeGlobal, &size);
@@ -368,7 +641,7 @@ PCAudioDevice *pcad_open(const char *uid, PCStreamType type, PCDeviceFormat *fmt
         snprintf(fmt->description, sizeof(fmt->description), "%s (%s), shared, %d ch float %.0f Hz",
                  name, transport_name(transport), fmt->channels, fmt->rate);
     }
-    d->bytes_per_frame = fmt->channels * fmt->bits / 8;
+    if (type != PC_STREAM_PCM_EXCLUSIVE) d->bytes_per_frame = fmt->channels * fmt->bits / 8;
 
     UInt32 dlat = 0, slat = 0;
     getp(d->dev, kAudioDevicePropertyLatency, kAudioObjectPropertyScopeOutput, sizeof(dlat), &dlat);
@@ -404,6 +677,7 @@ void pcad_close(PCAudioDevice *d) {
         AudioDeviceDestroyIOProcID(d->dev, d->procid);
     }
     if (d->dev) restore_device(d);
+    free(d->tmp);
     free(d);
 }
 

@@ -8,19 +8,34 @@ import UniformTypeIdentifiers
 struct Track: Identifiable, Hashable {
     let id = UUID()
     let url: URL
-    var name: String { url.deletingPathExtension().lastPathComponent }
+    /// Cue sheet tracks: a span of `url` from `start` to `end` (nil = end of file).
+    let cue: CueTrack?
+    var start: Double { cue?.start ?? 0 }
+    var end: Double? { cue?.end }
+    var name: String {
+        if let cue { return String(format: "%02d. %@", cue.number, cue.title) }
+        return url.deletingPathExtension().lastPathComponent
+    }
     /// Parent folder, e.g. the album folder in an Artist/Album/Track library.
     var folder: String { url.deletingLastPathComponent().lastPathComponent }
     /// Lowercased, diacritic-folded text the sidebar search matches against.
     let searchText: String
 
-    init(url: URL) {
+    init(url: URL, cue: CueTrack? = nil) {
         self.url = url
-        let parts = url.deletingPathExtension().pathComponents.suffix(4).joined(separator: " ")
+        self.cue = cue
+        var parts = url.deletingPathExtension().pathComponents.suffix(4).joined(separator: " ")
+        if let cue { parts += " \(cue.title) \(cue.performer) \(cue.album)" }
         searchText = parts.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
     }
 
     func matches(_ terms: [String]) -> Bool { terms.allSatisfy { searchText.contains($0) } }
+
+    /// `next` continues this item in the same file (consecutive cue tracks): gapless, no reopen.
+    func continues(into next: Track) -> Bool {
+        guard let end, next.cue != nil, next.url.standardizedFileURL.path == url.standardizedFileURL.path else { return false }
+        return abs(next.start - end) < 0.001
+    }
 }
 
 struct AudioDevice: Identifiable, Hashable {
@@ -108,6 +123,28 @@ final class PlayerModel: ObservableObject {
     @Published var stereoAsAC3: Bool = defaults.object(forKey: "stereoAsAC3") as? Bool ?? false {
         didSet { Self.defaults.set(stereoAsAC3, forKey: "stereoAsAC3"); settingsChanged() }
     }
+    /// Don't transcode: multichannel sources go out as decoded PCM in their own layout and
+    /// rate (exclusive, bit-exact; HDMI into an AV receiver). Native AC3/DTS still pass through.
+    @Published var multichannelPcm: Bool = defaults.object(forKey: "multichannelPcm") as? Bool ?? false {
+        didSet { Self.defaults.set(multichannelPcm, forKey: "multichannelPcm"); settingsChanged() }
+    }
+
+    /// Settings' "Surround output": 0 Dolby Digital, 1 DTS, 2 multichannel PCM, 3 off (stereo PCM).
+    /// Same mapping onto the stored settings as the Windows app.
+    var surroundOutput: Int {
+        get { multichannelPcm ? 2 : !ac3Enabled ? 3 : bitstreamCodec == 1 ? 1 : 0 }
+        set {
+            batchingSettings = true
+            switch newValue {
+            case 0, 1: multichannelPcm = false; ac3Enabled = true; bitstreamCodec = newValue
+            case 2: multichannelPcm = true
+            default: multichannelPcm = false; ac3Enabled = false
+            }
+            batchingSettings = false
+            settingsChanged()       // one reopen for the lot
+        }
+    }
+    private var batchingSettings = false
     @Published var avOffsetMs: Double = defaults.double(forKey: "avOffsetMs") {
         didSet { Self.defaults.set(avOffsetMs, forKey: "avOffsetMs"); pc_player_set_av_offset(player, avOffsetMs / 1000) }
     }
@@ -236,6 +273,7 @@ final class PlayerModel: ObservableObject {
         case "]", "n": visualizer?.nextPreset()
         case "[", "p": visualizer?.previousPreset()
         case "l": visLocked.toggle()
+        case "a": cycleAudioTrack()
         default: return false
         }
         return true
@@ -343,22 +381,74 @@ final class PlayerModel: ObservableObject {
     /// Adds files and folders (folders are scanned recursively, off the main thread).
     /// `at` inserts at a playlist position (e.g. a drop between rows); nil appends.
     func add(urls: [URL], playFirst: Bool, at insertIndex: Int? = nil) {
+        noteRecent(urls)
         isScanning = true
         Task.detached(priority: .userInitiated) {
-            let files = Self.expand(urls)
+            let tracks = Self.expand(urls)
             await MainActor.run {
                 self.isScanning = false
-                guard !files.isEmpty else { return }
+                guard !tracks.isEmpty else { return }
                 let at = min(max(insertIndex ?? self.playlist.count, 0), self.playlist.count)
                 let currentID = self.currentIndex.map { self.playlist[$0].id }
-                self.playlist.insert(contentsOf: files.map { Track(url: $0) }, at: at)
+                self.playlist.insert(contentsOf: tracks, at: at)
                 self.currentIndex = currentID.flatMap { id in self.playlist.firstIndex { $0.id == id } }
                 if playFirst { self.play(index: at) }
             }
         }
     }
 
-    nonisolated static func expand(_ urls: [URL]) -> [URL] {
+    // MARK: recently opened (File > Open Recent)
+
+    static let maxRecents = 10
+    /// What the user opened (files or folders, via Open…, drops, Finder), newest first.
+    @Published private(set) var recentURLs: [URL] =
+        (defaults.stringArray(forKey: "recentFiles") ?? []).map { URL(fileURLWithPath: $0) }
+
+    private func noteRecent(_ urls: [URL]) {
+        var list = recentURLs
+        for url in urls.reversed() where url.isFileURL {   // keep the opened order: first url on top
+            let u = url.standardizedFileURL
+            list.removeAll { $0.path == u.path }
+            list.insert(u, at: 0)
+        }
+        setRecents(Array(list.prefix(Self.maxRecents)))
+    }
+
+    private func setRecents(_ list: [URL]) {
+        recentURLs = list
+        Self.defaults.set(list.map(\.path), forKey: "recentFiles")
+    }
+
+    func clearRecents() { setRecents([]) }
+
+    /// Plays a recent item: a file already in the playlist plays in place; anything else
+    /// (a file not in the playlist, a folder, a cue sheet) is added and its first item played.
+    func openRecent(_ url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            setRecents(recentURLs.filter { $0.path != url.path })
+            errorMessage = "\(url.lastPathComponent) no longer exists"
+            return
+        }
+        if let i = playlist.firstIndex(where: { $0.cue == nil && $0.url.standardizedFileURL.path == url.path }) {
+            noteRecent([url])
+            play(index: i)
+        } else {
+            add(urls: [url], playFirst: true)
+        }
+    }
+
+    /// Menu title: the name, plus the parent folder when two recents share a name.
+    func recentTitle(_ url: URL) -> String {
+        let name = url.lastPathComponent
+        let clash = recentURLs.filter { $0.lastPathComponent == name }.count > 1
+        return clash ? "\(name) — \(url.deletingLastPathComponent().lastPathComponent)" : name
+    }
+
+    nonisolated static func isCue(_ url: URL) -> Bool { url.pathExtension.lowercased() == "cue" }
+
+    /// Files and folders -> playlist items. A .cue sheet becomes its tracks, and the audio
+    /// files it covers aren't listed again on their own.
+    nonisolated static func expand(_ urls: [URL]) -> [Track] {
         var files: [URL] = []
         for url in urls {
             var isDir: ObjCBool = false
@@ -368,14 +458,29 @@ final class PlayerModel: ObservableObject {
                                                         options: [.skipsHiddenFiles, .skipsPackageDescendants])
                 var found: [URL] = []
                 while let f = en?.nextObject() as? URL {
-                    if mediaExtensions.contains(f.pathExtension.lowercased()) { found.append(f) }
+                    if isCue(f) || mediaExtensions.contains(f.pathExtension.lowercased()) { found.append(f) }
                 }
                 files += found.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
             } else {
                 files.append(url)
             }
         }
-        return files
+        var sheets: [String: [CueTrack]] = [:]
+        var covered = Set<String>()
+        for f in files where isCue(f) && sheets[f.standardizedFileURL.path] == nil {
+            let cue = CueSheet.load(f, mediaExtensions: mediaExtensions)
+            sheets[f.standardizedFileURL.path] = cue
+            for t in cue { covered.insert(t.audioURL.standardizedFileURL.path) }
+        }
+        var tracks: [Track] = []
+        var emitted = Set<String>()
+        for f in files {
+            let path = f.standardizedFileURL.path
+            guard emitted.insert(path).inserted else { continue }
+            if isCue(f) { tracks += (sheets[path] ?? []).map { Track(url: $0.audioURL, cue: $0) } }
+            else if !covered.contains(path) { tracks.append(Track(url: f)) }
+        }
+        return tracks
     }
 
     func remove(ids: Set<Track.ID>) {
@@ -406,15 +511,19 @@ final class PlayerModel: ObservableObject {
         errorMessage = nil
 
         var cfg = PCConfig()
-        cfg.bitstream_enabled = ac3Enabled ? 1 : 0
-        cfg.bitstream_codec = Int32(bitstreamCodec == 1 ? PC_CODEC_DTS.rawValue : PC_CODEC_AC3.rawValue)
+        // multichannel PCM transcodes nothing: bitstream is then only native passthrough,
+        // of AC3 and DTS alike
+        cfg.bitstream_enabled = (multichannelPcm ? ac3Passthrough : ac3Enabled) ? 1 : 0
+        cfg.bitstream_codec = Int32(bitstreamCodec == 1 || multichannelPcm ? PC_CODEC_DTS.rawValue : PC_CODEC_AC3.rawValue)
+        cfg.multichannel_pcm = multichannelPcm ? 1 : 0
         cfg.dts_bitrate_kbps = Int32(dtsBitrate)
         cfg.ac3_bitrate_kbps = Int32(ac3Bitrate)
         cfg.passthrough = ac3Passthrough ? 1 : 0
         cfg.stereo_bitstream = stereoAsAC3 ? 1 : 0
         cfg.audio_track = Int32(audioTrack)
-        cfg.start_position = start
+        cfg.start_position = track.start + max(0, start)   // cue tracks: offset into the file
         cfg.av_offset = avOffsetMs / 1000
+        if Self.debug { FileHandle.standardError.write("[app] open \(track.url.lastPathComponent) at \(String(format: "%.2f", cfg.start_position)) s\n".data(using: .utf8)!) }
         var err = [CChar](repeating: 0, count: 512)
         let uidString = effectiveDeviceUID
         let rc = uidString.withCString { uid -> Int32 in
@@ -471,10 +580,13 @@ final class PlayerModel: ObservableObject {
         if position > 3 || i == 0 { seek(to: 0) } else { play(index: i - 1) }
     }
 
+    /// `seconds` is relative to the current item (a cue track's start).
     func seek(to seconds: Double) {
-        guard isOpen else { return }
-        pc_player_seek(player, seconds)
-        position = seconds
+        guard isOpen, let i = currentIndex, playlist.indices.contains(i) else { return }
+        var s = max(0, seconds)
+        if duration > 0 { s = min(s, duration) }
+        pc_player_seek(player, playlist[i].start + s)
+        position = s
     }
 
     func skip(_ delta: Double) { seek(to: max(0, position + delta)) }
@@ -484,9 +596,29 @@ final class PlayerModel: ObservableObject {
         play(index: i, start: position, paused: !isPlaying, audioTrack: index)
     }
 
+    /// A key: next audio track (wraps).
+    func cycleAudioTrack() {
+        if audioTracks.count > 1 { selectAudioTrack((currentAudioTrack + 1) % audioTracks.count) }
+    }
+
+    /// Current audio track without its "N: " prefix, for the controls bar.
+    var currentAudioTrackLabel: String {
+        guard audioTracks.indices.contains(currentAudioTrack) else { return "" }
+        let s = audioTracks[currentAudioTrack]
+        if let r = s.range(of: ": "), s.distance(from: s.startIndex, to: r.lowerBound) < 4 { return String(s[r.upperBound...]) }
+        return s
+    }
+
+    /// Badge text when not bitstreaming: "PCM", or "PCM 5.1" for untranscoded multichannel.
+    var pcmBadge: String {
+        guard outputDescription.contains("multichannel") else { return "PCM" }
+        let parts = outputDescription.split(separator: " ")
+        return parts.count > 1 ? "PCM " + (parts[1].split(separator: "(").first.map(String.init) ?? "") : "PCM"
+    }
+
     /// Output settings changed: reopen the current item at the same position.
     private func settingsChanged() {
-        guard isOpen, let i = currentIndex else { return }
+        guard !batchingSettings, isOpen, let i = currentIndex else { return }
         play(index: i, start: position, paused: !isPlaying, audioTrack: currentAudioTrack)
     }
 
@@ -505,12 +637,25 @@ final class PlayerModel: ObservableObject {
     private var debugTicks = 0
 
     private func tick() {
-        guard isOpen, !isScrubbing else { return }
-        position = pc_player_position(player)
+        guard isOpen, let i = currentIndex, playlist.indices.contains(i) else { return }
+        let abs = pc_player_position(player)
+        // cue track boundary: the engine keeps playing the file, so the model moves on itself
+        if let end = playlist[i].end, abs >= end - 0.02 {
+            if i + 1 < playlist.count, playlist[i].continues(into: playlist[i + 1]) {
+                currentIndex = i + 1           // same file, next track: no reopen, no gap
+                selection = [playlist[i + 1].id]
+                applyTrackInfo(playlist[i + 1])
+            } else {
+                next()
+                return
+            }
+        }
+        guard !isScrubbing, let c = currentIndex else { return }
+        position = max(0, abs - playlist[c].start)
         if Self.debug {
             debugTicks += 1
             if debugTicks % 5 == 0 {
-                FileHandle.standardError.write("[app] items=\(playlist.count) \(title) pos=\(String(format: "%.2f", position))/\(String(format: "%.1f", duration)) playing=\(isPlaying) mode=\(outputMode) | \(outputDescription) | video: \(videoDescription) | fullscreen=\(isFullScreen) \(showsVisualizer ? visualizer!.debugStatus : "vis off")\n".data(using: .utf8)!)
+                FileHandle.standardError.write("[app] items=\(playlist.count) \(title) pos=\(String(format: "%.2f", position))/\(String(format: "%.1f", duration)) playing=\(isPlaying) mode=\(outputMode) | \(outputDescription) | video: \(videoDescription) | art=\(artwork != nil) fullscreen=\(isFullScreen) \(showsVisualizer ? visualizer!.debugStatus : "vis off")\n".data(using: .utf8)!)
             }
         }
     }
@@ -532,7 +677,8 @@ final class PlayerModel: ObservableObject {
         outputMode = info.mode
         bitstreamCodecName = cString(info.bitstream_codec)
         hasVideo = info.has_video != 0
-        duration = info.duration
+        fileDuration = info.duration
+        applyTrackInfo(track)
         audioTracks = (0..<pc_player_audio_track_count(player)).map { i in
             var buf = [CChar](repeating: 0, count: 256)
             pc_player_audio_track_name(player, i, &buf, 256)
@@ -543,7 +689,7 @@ final class PlayerModel: ObservableObject {
         if let art = pc_player_cover_art(player, &size), size > 0 {
             artwork = NSImage(data: Data(bytes: art, count: Int(size)))
         } else {
-            artwork = nil
+            artwork = folderArt(for: track.url)
         }
         // the hardware/software decode note is only known once frames arrive
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
@@ -552,6 +698,34 @@ final class PlayerModel: ObservableObject {
             pc_player_get_info(self.player, &i2)
             self.videoDescription = cString(i2.video)
         }
+    }
+
+    private var fileDuration: Double = 0     // engine duration of the open file
+
+    /// Title/artist/album and duration for `track`: cue metadata over the file's tags.
+    private func applyTrackInfo(_ track: Track) {
+        if let cue = track.cue {
+            title = cue.title
+            if !cue.performer.isEmpty { artist = cue.performer }
+            if !cue.album.isEmpty { album = cue.album }
+        }
+        duration = max(0, (track.end ?? fileDuration) - track.start)
+    }
+
+    // MARK: folder artwork
+
+    private var folderArtPath: String?
+    private var folderArtImage: NSImage?
+
+    /// Artwork for a file without embedded art: a .jpg/.jpeg/.png in the same folder (same
+    /// rules as the Windows app). The last image read is cached, so an album reads it once.
+    private func folderArt(for media: URL) -> NSImage? {
+        guard let pick = FolderArt.find(for: media) else { return nil }
+        if pick.path == folderArtPath { return folderArtImage }
+        let size = (try? pick.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        folderArtPath = pick.path
+        folderArtImage = size <= 32 << 20 ? NSImage(contentsOf: pick) : nil
+        return folderArtImage
     }
 
     private func updateActivity() {

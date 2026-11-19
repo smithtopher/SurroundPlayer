@@ -58,7 +58,7 @@ docs; this file is the context for continuing development.
       and SwapChainPanel, driven by CompositionTarget.Rendering. `SurroundPlayer.exe
       --vis-snapshot <dir>` writes a PNG per preset (verified: all 13 render like the Mac's).
       Live: 60 fps from the engine's tap; video keeps decoding but isn't drawn.
-    - **.cue sheets (2026-11-18, Windows app only, not on Mac yet):** `CueSheet.cs` parses them
+    - **.cue sheets (2026-11-18; Mac too since 2026-11-19, `CueSheet.swift`, same rules):** `CueSheet.cs` parses them
       (UTF-8/UTF-16, else the ANSI code page; a missing `FILE` falls back to the same name with
       another media extension). `PlayerModel.Expand` turns a sheet into `Track`s with `Start`/`End`
       and hides the audio files it covers. App-level only, no engine change: open at
@@ -70,7 +70,7 @@ docs; this file is the context for continuing development.
       `cover art:` line), else a .jpg/.jpeg/.png in the file's folder (`PlayerModel.FindFolderArt`:
       same name as the file > cover/folder/front/album/albumart > names containing
       cover/folder/front > first alphabetically). Shown when the visualiser is off and there's
-      no video. The Mac app has embedded art only.
+      no video. The Mac app does the same (`FolderArt.swift`, since 2026-11-19).
     - **Not done on Windows:** cursor auto-hide only via ShowCursor, HDR (PQ) tone mapping,
       playlist persistence (not on Mac either).
     - Shortcuts: Mac ⌘ → Ctrl (Ctrl+←/→ prev/next, Ctrl+F search, Ctrl+O open, Ctrl+, settings).
@@ -187,10 +187,23 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
   `PC_STREAM_PCM_EXCLUSIVE`: WASAPI exclusive, first accepted of source rate / 48 kHz ×
   source mask / side↔back twin × s24-in-32 / s32 / s16 / float. Bit-exact for ≤24-bit,
   verified with a 24/96 dump. Native AC3/DTS still pass through; stereo stays shared PCM.
-  On refusal it falls back to shared PCM. CoreAudio refuses it for now, and the Mac UI
-  doesn't expose it. The Samsung accepts 6 ch 24/96 over HDMI, but optical to the amp is
-  stereo, so it's for HDMI-direct AVR setups.
-- **Audio tracks:** `PCConfig.audio_track`. Windows app: labelled track menu in the
+  On refusal it falls back to shared PCM. The Samsung accepts 6 ch 24/96 over HDMI (Windows),
+  but optical to the amp is stereo, so it's for HDMI-direct AVR setups.
+  - **CoreAudio (2026-11-19):** hog + mixing off (`take_exclusive`, shared with bitstream),
+    then the best LPCM physical format with ≥ the source's channels (exact count first) at the
+    source rate, else 48 kHz, and a float32 virtual format of the same shape (falls back to
+    the physical int format; 24-in-32 must be high-aligned). Speaker routing comes from the
+    device's `PreferredChannelLayout`: descriptions, bitmap, or a layout tag expanded with
+    AudioToolbox (the expanded layout keeps its tag but carries descriptions). Labels map to
+    WAVE bits (Ls/Rs → side, Rls/Rrs → back). The engine renders that mask in WAVE order,
+    and the IOProc scatters into device order (`speaker_perm`); unlabelled channels get
+    silence. With no layout reported, it assumes the source's order when the counts match.
+  - **Tested on Mac** (no HDMI device attached at the time): the exclusive open, rate switch,
+    silent render and restore on the built-in speakers (2 ch), refusal of 6 ch there (→ shared
+    PCM fallback with the reason in `output`), and synthetic unit tests of the layout parsing
+    and IOProc scatter (MPEG 5.1 A/C tags, HDMI 7.1 descriptions, bitmap, unlabelled channels).
+    **Not yet tried on a real HDMI device:** `pctest play <silent 5.1 file> --mc-pcm --device <uid>`.
+- **Audio tracks:** `PCConfig.audio_track`. Both apps: labelled track menu in the
   controls bar (shown when a file has >1 track) and the A key cycles. pcdump has `--track N`.
 - **Bursts:** AC3 is 6144 bytes, DTS (512-sample frames) is 2048. Writes to the ring are
   always whole bursts. The IOProc only switches between real data and **encoded silence
@@ -236,10 +249,15 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
 - **Settings keys in UserDefaults (domain `local.surroundplayer`):**
   - Device: `deviceUID`, `deviceName`.
   - Bitstream: `ac3Enabled` (means bitstream on/off), `bitstreamCodec` (0 AC3, 1 DTS),
-    `ac3Bitrate`, `dtsBitrate`, `ac3Passthrough`, `stereoAsAC3`, `multichannelPcm`
-    (Windows only so far). The Windows settings show these as one "Surround output"
-    choice: DD / DTS / Multichannel PCM / Off.
+    `ac3Bitrate`, `dtsBitrate`, `ac3Passthrough`, `stereoAsAC3`, `multichannelPcm`.
+    Both apps show these as one "Surround output" choice: DD / DTS / Multichannel PCM / Off
+    (Mac: `PlayerModel.surroundOutput`, which sets them together with a single reopen).
   - Other: `avOffsetMs`, `visualizerEnabled`.
+  - `recentFiles`: File > Open Recent, newest first, at most 10 paths. It records what the user
+    opened (files, folders or cue sheets, via Open…, drops, Finder), in `PlayerModel.add`.
+    Auto-advance doesn't add to it.
+- **Version:** `CFBundleShortVersionString` in `Resources/Info.plist`, shown in Settings. Kept
+  in step with the Windows `<Version>` (1.2.1 = same features on both).
 
 ## Testing — IMPORTANT
 - **Never play audible test signals.** The TV is often the default output, and a test once
@@ -265,7 +283,8 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
       zero-crossing script (test files put a different tone on each channel).
     - Passthrough is verified with `cmp` against the source's elementary stream.
   - **App debug (macOS):** `SURROUND_DEBUG=1` logs status to stderr every second (output, video
-    decode, visualiser frames/signal). `SURROUND_TEST_FULLSCREEN=1` toggles full screen after
+    decode, artwork, visualiser frames/signal), plus an `[app] open <file> at <s>` line per
+    file open. That's how gapless cue-track switches were checked: one open per file. `SURROUND_TEST_FULLSCREEN=1` toggles full screen after
     2 s. `SurroundPlayer --vis-snapshot <dir>` renders every preset to PNG with synthetic
     music, which is how the visuals were checked.
   - **Intel:** run the x86_64 / universal binaries with `arch -x86_64` (Rosetta).
@@ -286,10 +305,10 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
     `pcdump`.
 - **Untested:** DTS-HD sources (no encoder to make test files), and audible playback through
   the amp.
-- **Not implemented:** subtitles, gapless playback, persisting the playlist across launches,
+- **Not implemented:** subtitles, gapless playback (except between cue tracks of one file), persisting the playlist across launches,
   E-AC3/TrueHD/DTS-HD bitstreaming over HDMI direct to an AVR (the user's chain is optical,
   so AC3/DTS core is the ceiling), and notarization.
 - A clock stall after a seek happened once on the very first bitstream run (when the TV
   first switched to DD) and never reproduced.
-- PCM multichannel channel order follows FFmpeg's default layouts, not the device's
-  preferred channel layout.
+- Shared-mode PCM multichannel channel order follows FFmpeg's default layouts, not the
+  device's preferred channel layout. (Exclusive multichannel PCM on macOS does follow it.)

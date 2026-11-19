@@ -21,56 +21,62 @@ struct SettingsView: View {
             } header: { Text("Audio Device") }
 
             Section {
-                Toggle("Bitstream surround (Dolby Digital / DTS)", isOn: $model.ac3Enabled)
-                Picker("Transcode surround to", selection: $model.bitstreamCodec) {
-                    Text("Dolby Digital (AC3)").tag(0)
-                    Text("DTS").tag(1)
+                Picker("Surround output", selection: Binding(get: { model.surroundOutput }, set: { model.surroundOutput = $0 })) {
+                    Text("Dolby Digital bitstream (AC3, transcoded)").tag(0)
+                    Text("DTS bitstream (transcoded)").tag(1)
+                    Text("Multichannel PCM (no transcoding, HDMI to an AV receiver)").tag(2)
+                    Text("Off (stereo PCM)").tag(3)
                 }
-                .disabled(!model.ac3Enabled)
-                if model.bitstreamCodec == 0 {
+                let mode = model.surroundOutput
+                if mode == 0 {
                     Picker("Dolby Digital bitrate", selection: $model.ac3Bitrate) {
                         Text("384 kb/s").tag(384)
                         Text("448 kb/s (DVD)").tag(448)
                         Text("640 kb/s (Blu-ray, best)").tag(640)
                     }
-                    .disabled(!model.ac3Enabled)
-                } else {
+                } else if mode == 1 {
                     Picker("DTS bitrate", selection: $model.dtsBitrate) {
                         Text("1509 kb/s (full rate, best)").tag(1509)
                         Text("754 kb/s (half rate)").tag(754)
                     }
-                    .disabled(!model.ac3Enabled)
                 }
-                Toggle(model.bitstreamCodec == 0 ? "Pass native Dolby Digital tracks through untouched"
-                                                 : "Pass native Dolby Digital and DTS tracks through untouched",
-                       isOn: $model.ac3Passthrough)
-                    .disabled(!model.ac3Enabled)
-                Toggle("Also encode stereo sources", isOn: $model.stereoAsAC3)
-                    .disabled(!model.ac3Enabled)
-                Text("""
-                Multichannel audio (E-AC3, DTS-HD, TrueHD, AAC, FLAC, …) is decoded, downmixed to 5.1 when needed and \
-                re-encoded to the chosen format, then sent as an IEC 61937 bitstream with exclusive access to the device — \
-                the same approach Kodi uses with WASAPI exclusive mode. The TV only has to forward it over optical to the amp. \
-                Stereo sources play as PCM unless the option above is on; turn it on if your amp drops out when \
-                switching between PCM and surround.
-                """)
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                if model.bitstreamCodec == 1 {
-                    Text("""
+                if mode != 3 {
+                    Toggle(mode == 0 ? "Pass native Dolby Digital tracks through untouched"
+                                     : "Pass native Dolby Digital and DTS tracks through untouched",
+                           isOn: $model.ac3Passthrough)
+                }
+                if mode == 0 || mode == 1 {
+                    Toggle("Also encode stereo sources", isOn: $model.stereoAsAC3)
+                    note("""
+                    Multichannel audio (E-AC3, DTS-HD, TrueHD, AAC, FLAC, …) is decoded, downmixed to 5.1 when needed and \
+                    re-encoded to the chosen format, then sent as an IEC 61937 bitstream with exclusive access to the device — \
+                    the same approach Kodi uses with WASAPI exclusive mode. The TV only has to forward it over optical to the amp. \
+                    Stereo sources play as PCM unless the option above is on; turn it on if your amp drops out when \
+                    switching between PCM and surround.
+                    """)
+                }
+                if mode == 1 {
+                    note("""
                     DTS: in this mode native DTS tracks (and the DTS core of DTS-HD) also pass through untouched. \
                     The DTS encoder is FFmpeg's, which is marked experimental and is less refined than its AC3 \
                     encoder. Some TVs don't forward DTS over optical; if the amp goes silent, set the TV's digital \
                     output to Pass-through/Bitstream, or use Dolby Digital.
                     """)
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                }
+                if mode == 2 {
+                    note("""
+                    Multichannel PCM: surround is decoded and sent as uncompressed PCM in its own channel layout and \
+                    sample rate (up to 7.1, 24-bit/192 kHz), with exclusive access, bit-for-bit, nothing re-encoded. Needs \
+                    HDMI straight into an AV receiver (or a TV that passes it on over HDMI eARC): optical/S/PDIF can't \
+                    carry it, so a TV feeding an amp over optical downmixes it to stereo. If the device refuses the \
+                    layout, the player falls back to stereo PCM.
+                    """)
                 }
             } header: { Text("Surround") }
 
             Section {
                 Toggle("Show visualiser for music", isOn: $model.visualizerEnabled)
-                Text("A MilkDrop-style feedback visualiser that reacts to the audio actually leaving the speakers. When on, it also replaces the picture of files with a video track. Keys: V toggle, ] / [ next / previous preset, L lock preset, F full screen.")
+                Text("A MilkDrop-style feedback visualiser that reacts to the audio actually leaving the speakers. When on, it also replaces the picture of files with a video track. Keys: V toggle, ] / [ next / previous preset, L lock preset, F full screen, A next audio track.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } header: { Text("Visualiser") }
@@ -84,9 +90,23 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } header: { Text("Sync") }
+
+            Section {
+                Text("Surround Player \(Self.version)").font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .frame(width: 520)
         .padding(.vertical, 8)
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    static var version: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "(development build)"
     }
 }
