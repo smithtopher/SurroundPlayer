@@ -168,6 +168,8 @@ public sealed partial class MainWindow : Window
             case nameof(PlayerModel.CurrentAudioTrack):
                 AudioTrackButton.Visibility = Model.AudioTracks.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
                 AudioTrackLabel.Text = Model.CurrentAudioTrackLabel;
+                ToolTipService.SetToolTip(AudioTrackButton, $"Audio track: {Model.CurrentAudioTrackLabel} (A: next track)");
+                FitRightControls();
                 break;
             case nameof(PlayerModel.VisualizerEnabled):
                 VisToggle.IsChecked = Model.VisualizerEnabled;
@@ -230,7 +232,7 @@ public sealed partial class MainWindow : Window
         ToolTipService.SetToolTip(OutputBadge, Model.OutputDescription);
         DetailSource.Text = Model.SourceAudio;
         SourceFormatText.Text = Model.SourceFormat;
-        SourceFormatText.Visibility = Model.SourceFormat.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        FitRightControls();
         DetailOutput.Text = Model.OutputDescription;
         DetailVideo.Text = Model.VideoDescription;
         DetailVideoPanel.Visibility = Model.HasVideo ? Visibility.Visible : Visibility.Collapsed;
@@ -537,7 +539,30 @@ public sealed partial class MainWindow : Window
     {
         SubtitleButton.Visibility = Model.HasVideo ? Visibility.Visible : Visibility.Collapsed;
         int i = Model.CurrentSubtitleTrack;
-        SubtitleLabel.Text = i >= 0 && i < Model.SubtitleTracks.Count ? Model.SubtitleTracks[i] : "Off";
+        SubtitleLabel.Text = Model.SubtitleShortLabel;
+        ToolTipService.SetToolTip(SubtitleButton,
+            $"Subtitles: {(i >= 0 && i < Model.SubtitleTracks.Count ? Model.SubtitleTracks[i] : "off")} (S: next)");
+        FitRightControls();
+    }
+
+    private void BarGrid_SizeChanged(object sender, SizeChangedEventArgs e) => FitRightControls();
+
+    /// The right-hand group (CC, audio track, format, badge) is right-aligned in its half of the
+    /// bar, so when too wide it would be clipped from the left, hiding the buttons. Drop the
+    /// labels instead, least useful first; the buttons and their menus stay.
+    private void FitRightControls()
+    {
+        if (BarGrid.ActualWidth <= 0) return;
+        double avail = (BarGrid.ActualWidth - TransportPanel.ActualWidth) / 2 - BarGrid.ColumnSpacing;
+        SourceFormatText.Visibility = Model.SourceFormat.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        AudioTrackLabel.Visibility = Visibility.Visible;
+        SubtitleLabel.Visibility = Visibility.Visible;
+        foreach (var label in new FrameworkElement[] { AudioTrackLabel, SubtitleLabel, SourceFormatText })
+        {
+            RightControls.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+            if (RightControls.DesiredSize.Width <= avail) break;
+            label.Visibility = Visibility.Collapsed;
+        }
     }
 
     private void SubtitleMenu_Opening(object sender, object e)

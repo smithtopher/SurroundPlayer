@@ -154,6 +154,9 @@ typedef struct {
 
 PC_API int pc_player_subtitle_track_count(PCPlayer *p);
 PC_API void pc_player_subtitle_track_name(PCPlayer *p, int index, char *buf, int len);
+// PC_SUBFLAG_*: the file marks the track as default / forced; an added file.
+enum { PC_SUBFLAG_DEFAULT = 1, PC_SUBFLAG_FORCED = 2, PC_SUBFLAG_EXTERNAL = 4 };
+PC_API int pc_player_subtitle_track_flags(PCPlayer *p, int index);
 // ISO 639-2 language tag of a track ("eng"), or "" if unknown.
 PC_API void pc_player_subtitle_track_language(PCPlayer *p, int index, char *buf, int len);
 PC_API int pc_player_current_subtitle_track(PCPlayer *p);   // -1 = off

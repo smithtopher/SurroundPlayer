@@ -25,6 +25,7 @@ public sealed partial class PlayerModel
     private int _currentSubtitleTrack = -1;
     public int CurrentSubtitleTrack { get => _currentSubtitleTrack; private set => Set(ref _currentSubtitleTrack, value); }
     private List<string> _subtitleLangs = new();   // normalised 2-letter codes ("" = unknown), per track
+    private List<int> _subtitleFlags = new();      // Native.PC_SUBFLAG_*, per track
 
     private int _videoWidth, _videoHeight;
     public int VideoWidth { get => _videoWidth; private set => Set(ref _videoWidth, value); }
@@ -63,12 +64,16 @@ public sealed partial class PlayerModel
     {
         var names = new List<string>();
         var langs = new List<string>();
+        var flags = new List<int>();
         int count = Native.pc_player_subtitle_track_count(_player);
         var buf = new byte[256];
         for (int i = 0; i < count; i++)
         {
             fixed (byte* b = buf) { Native.pc_player_subtitle_track_name(_player, i, b, 256); names.Add(Native.Str(b, 256)); }
             fixed (byte* b = buf) { Native.pc_player_subtitle_track_language(_player, i, b, 256); langs.Add(NormalizeLanguage(Native.Str(b, 256))); }
+            int f = Native.pc_player_subtitle_track_flags(_player, i);
+            if (names[i].Contains(".forced.", StringComparison.OrdinalIgnoreCase)) f |= Native.PC_SUBFLAG_FORCED;
+            flags.Add(f);
         }
         // external files: language from the name, e.g. "Movie.en.srt" or "Movie.eng.forced.srt"
         for (int i = 0; i < count; i++)
@@ -79,24 +84,33 @@ public sealed partial class PlayerModel
                 for (int j = parts.Length - 1; j >= 1 && langs[i].Length == 0; j--) langs[i] = NormalizeLanguage(parts[j]);
             }
         _subtitleLangs = langs;
+        _subtitleFlags = flags;
         SubtitleTracks = names;
     }
 
-    /// Off unless the user turned subtitles on before (Settings.subtitleLanguage): then a
-    /// track in that language, else one of unknown language. A forced track (foreign-language
-    /// parts only) is shown even when subtitles are off.
+    /// Settings.subtitleLanguage: "" (never chosen) follows the file: the track it marks as
+    /// default, like mpv/VLC. "off": off. "*" or a language: a track in that language, else one
+    /// of unknown language. A forced track (foreign-language parts only) is shown when nothing
+    /// else is.
     private int PreferredSubtitleTrack()
     {
         string pref = _settings.subtitleLanguage ?? "";
-        bool Forced(int i) => SubtitleTracks[i].Contains("(forced)", StringComparison.OrdinalIgnoreCase)
-                              || SubtitleTracks[i].Contains(".forced.", StringComparison.OrdinalIgnoreCase);
+        bool Forced(int i) => (_subtitleFlags[i] & Native.PC_SUBFLAG_FORCED) != 0;
+        bool Default(int i) => (_subtitleFlags[i] & Native.PC_SUBFLAG_DEFAULT) != 0;
         var all = Enumerable.Range(0, SubtitleTracks.Count).ToList();
-        if (pref.Length == 0) return all.FirstOrDefault(Forced, -1);
+        if (pref == "off") return all.FirstOrDefault(Forced, -1);
+        if (pref.Length == 0) return all.FirstOrDefault(i => Default(i) && !Forced(i), all.FirstOrDefault(Forced, -1));
         if (pref == "*") return all.Where(i => !Forced(i)).DefaultIfEmpty(all.FirstOrDefault(-1)).First();
         var lang = all.Where(i => _subtitleLangs[i] == pref).ToList();
         if (lang.Count > 0) return lang.Where(i => !Forced(i)).DefaultIfEmpty(lang[0]).First();
         return all.FirstOrDefault(i => _subtitleLangs[i].Length == 0 && !Forced(i), -1);
     }
+
+    /// Short label for the CC button: "Off", the language ("EN"), or the track number.
+    public string SubtitleShortLabel =>
+        CurrentSubtitleTrack < 0 || CurrentSubtitleTrack >= SubtitleTracks.Count ? "Off"
+        : _subtitleLangs[CurrentSubtitleTrack] is { Length: > 0 } l ? l.ToUpperInvariant()
+        : $"#{CurrentSubtitleTrack + 1}";
 
     /// The user's choice (-1 = off); also remembered for the next files.
     public void SelectSubtitleTrack(int index)
@@ -104,7 +118,7 @@ public sealed partial class PlayerModel
         if (!_isOpen) return;
         Native.pc_player_set_subtitle_track(_player, index);
         CurrentSubtitleTrack = Native.pc_player_current_subtitle_track(_player);
-        _settings.subtitleLanguage = CurrentSubtitleTrack < 0 ? ""
+        _settings.subtitleLanguage = CurrentSubtitleTrack < 0 ? "off"
             : _subtitleLangs[CurrentSubtitleTrack] is { Length: > 0 } l ? l : "*";
         _settings.Save();
     }

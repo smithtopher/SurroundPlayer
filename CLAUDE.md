@@ -226,10 +226,14 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
   \N -> newline). Bitmaps: PAL8 -> premultiplied BGRA; open-ended events end at the next one.
   `pc_player_subtitle_state` looks up at `video_clock` (clock - av_offset) and has one serial
   across track switches. Text files must be UTF-8 (no iconv in our FFmpeg): the Windows app
-  converts others to %TEMP%\SurroundPlayer\subtitles. Bitmap rendering is untested (ffmpeg
-  can't make PGS/DVD test files from text). `pctest play <video> --sub N | --sub-file F`.
+  converts others to %TEMP%\SurroundPlayer\subtitles. PGS was tested with a generated .sup
+  (FFmpeg can't encode PGS; a small script writes PCS/WDS/PDS/ODS/END segments). Mux it with
+  `ffmpeg -copyts -i test.sup` or ffmpeg shifts it to start at 0. DVD/DVB subs are untested.
+  Controls bar: `FitRightControls` collapses labels so buttons are never clipped. `pctest play <video> --sub N | --sub-file F`.
   Windows app: `PlayerModel.Subtitles.cs` (sidecars `Movie[.lang...].srt/.ass/.ssa/.vtt`,
-  `subtitleLanguage` setting: "" off, "*" any, else 2-letter; forced tracks auto), overlay
+  `subtitleLanguage` setting: "" never chosen = the file's default-flagged track, "off", "*" any,
+  else 2-letter; forced tracks shown when nothing else is; flags from
+  `pc_player_subtitle_track_flags`), overlay
   `SubtitleLayer` in `MainWindow` polled every 40 ms, placed over the uniform-fit video rect.
 - **Source format:** `PCInfo.source_rate` / `source_bits` (`audio_stream_bits`:
   `bits_per_raw_sample`, else the sample size of lossless/PCM codecs, else 0 = lossy). The

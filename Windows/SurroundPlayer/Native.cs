@@ -113,6 +113,8 @@ internal static unsafe class Native
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern void pc_player_subtitle_track_name(IntPtr p, int index, byte* buf, int len);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern void pc_player_subtitle_track_language(IntPtr p, int index, byte* buf, int len);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int pc_player_current_subtitle_track(IntPtr p);
+    public const int PC_SUBFLAG_DEFAULT = 1, PC_SUBFLAG_FORCED = 2, PC_SUBFLAG_EXTERNAL = 4;
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int pc_player_subtitle_track_flags(IntPtr p, int index);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern void pc_player_set_subtitle_track(IntPtr p, int index);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int pc_player_add_subtitle_file(IntPtr p,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string path, [MarshalAs(UnmanagedType.LPUTF8Str)] string? name);

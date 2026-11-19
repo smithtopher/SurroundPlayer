@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.6] — 2026-11-19 (Windows)
+
+### Fixed
+- **Embedded subtitles never came on by themselves**, and with a long audio track name the CC
+  button was pushed off the controls bar, so they couldn't be chosen either (only "Load
+  Subtitle File…" worked). Now:
+  - A subtitle track the file marks as default is shown, like mpv and VLC, until you choose
+    otherwise; choosing Off is remembered.
+  - The controls bar drops labels (audio track name, subtitle language, source format) instead
+    of clipping buttons when space is short. The CC button shows a short code ("EN", "Off");
+    full names are in the tooltips and menus.
+
+### Engine
+- `pc_player_subtitle_track_flags` (default / forced / external). Embedded PGS verified with a
+  generated Blu-ray subtitle stream (timing and placement), in `pctest` and in the app.
+
 ## [1.2.5] — 2026-11-19 (Windows)
 
 ### Engine

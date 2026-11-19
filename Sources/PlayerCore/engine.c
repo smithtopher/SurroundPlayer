@@ -226,7 +226,7 @@ struct PCPlayer {
     int audio_tracks[MAX_AUDIO_TRACKS], n_audio, cur_track;
     // subtitles: tracks are streams (stream >= 0, decoded by the demux thread as they are read,
     // whether selected or not, so switching is instant) or added files (path, loaded whole)
-    struct { int stream; char *path; char name[200]; char lang[16]; AVCodecContext *dec; PCSubs *store; }
+    struct { int stream, flags; char *path; char name[200]; char lang[16]; AVCodecContext *dec; PCSubs *store; }
         subt[MAX_SUB_TRACKS];
     _Atomic int n_sub, cur_sub;      // cur_sub: selected track, -1 off
     int sub_last_track, sub_last_serial, sub_serial;   // pc_player_subtitle_state's view (caller's thread)
@@ -1253,6 +1253,8 @@ int pc_player_open(PCPlayer *p, const char *path, const PCConfig *cfg, int pause
             const char *lang = meta(st->metadata, "language");
             const char *title = meta(st->metadata, "title");
             p->subt[n].stream = (int)i;
+            p->subt[n].flags = ((st->disposition & AV_DISPOSITION_DEFAULT) ? PC_SUBFLAG_DEFAULT : 0) |
+                               ((st->disposition & AV_DISPOSITION_FORCED) ? PC_SUBFLAG_FORCED : 0);
             p->subt[n].path = NULL;
             snprintf(p->subt[n].lang, sizeof(p->subt[n].lang), "%s", lang && strcmp(lang, "und") ? lang : "");
             snprintf(p->subt[n].name, sizeof(p->subt[n].name), "%d: %s%s%s%s%s%s", n + 1,
@@ -1520,6 +1522,10 @@ void pc_player_subtitle_track_name(PCPlayer *p, int index, char *buf, int len) {
     if (p->is_open && index >= 0 && index < atomic_load(&p->n_sub)) snprintf(buf, len, "%s", p->subt[index].name);
 }
 
+int pc_player_subtitle_track_flags(PCPlayer *p, int index) {
+    return p->is_open && index >= 0 && index < atomic_load(&p->n_sub) ? p->subt[index].flags : 0;
+}
+
 void pc_player_subtitle_track_language(PCPlayer *p, int index, char *buf, int len) {
     if (len > 0) buf[0] = 0;
     if (p->is_open && index >= 0 && index < atomic_load(&p->n_sub)) snprintf(buf, len, "%s", p->subt[index].lang);
@@ -1538,6 +1544,7 @@ int pc_player_add_subtitle_file(PCPlayer *p, const char *path, const char *name)
     PCSubs *store = subs_create();
     if (!store || subs_load_file(store, path, err, sizeof(err)) < 0) { subs_destroy(store); return -1; }
     p->subt[n].stream = -1;
+    p->subt[n].flags = PC_SUBFLAG_EXTERNAL;
     p->subt[n].path = av_strdup(path);
     p->subt[n].dec = NULL;
     p->subt[n].store = store;

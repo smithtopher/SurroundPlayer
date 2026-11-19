@@ -150,7 +150,9 @@ int main(int argc, char **argv) {
     for (int i = 0; i < nsubs; i++) {
         char name[256];
         pc_player_subtitle_track_name(p, i, name, sizeof(name));
-        printf("subtitle track %s\n", name);
+        int fl = pc_player_subtitle_track_flags(p, i);
+        printf("subtitle track %s%s%s%s\n", name, fl & PC_SUBFLAG_DEFAULT ? " [default]" : "",
+               fl & PC_SUBFLAG_FORCED ? " [forced]" : "", fl & PC_SUBFLAG_EXTERNAL ? " [file]" : "");
     }
     if (sub_track >= 0) pc_player_set_subtitle_track(p, sub_track);
     int sub_serial = 0;
