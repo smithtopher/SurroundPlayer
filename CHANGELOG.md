@@ -1,0 +1,129 @@
+# Changelog
+
+All notable changes to Surround Player, reconstructed from the git history (commit hashes in
+brackets). macOS and Windows share the C engine. Since 1.2.1 they share version numbers too.
+Before that the Mac app stayed at 1.0 while the Windows app went 1.0.0 → 1.2.0.
+
+Windows release builds (single self-contained `.exe`) are on the `releases` branch.
+
+## [1.2.1] — 2026-11-19
+
+### macOS
+The Mac app catches up with the Windows app's features [1460afd].
+- **Multichannel PCM output** in the CoreAudio back-end. Surround goes out as decoded PCM in the
+  source's own channel layout and sample rate, with exclusive access and nothing re-encoded.
+  It's for HDMI straight into an AV receiver.
+  - Speaker routing follows the device's reported channel layout.
+  - Falls back to stereo PCM, giving the reason, when the device can't take it.
+  - `pctest --mc-pcm` for headless testing.
+  - Not yet tried on a real HDMI device.
+- **"Surround output" setting:** Dolby Digital / DTS / Multichannel PCM / Off, the same as the
+  Windows app.
+- **.cue sheets:** a sheet becomes separate playlist tracks, and the audio file it covers is
+  hidden. Tracks of the same file play gaplessly (no reopen). Sheets written on Windows
+  (backslash paths, Windows-1252 text) work.
+- **Folder artwork** (cover.jpg, folder.jpg, …) when a file has no embedded art.
+- **Audio tracks:** the track menu shows the current track's name, **A** cycles tracks, and the
+  badge shows "PCM 5.1" for untranscoded multichannel.
+- **File ▸ Open Recent:** the last 10 opened files, folders or cue sheets.
+- Version shown in Settings. `.cue` files can be opened from Finder.
+- **Full screen:** the top bar (title bar and toolbar) fades out with the controls after 3 s
+  without mouse movement, and the picture now runs under it [cb9773a].
+
+### Windows
+- Folder artwork when a file has no embedded art. `pcdump` prints a `cover art:` line [bdbe110].
+
+### Docs
+- README covers both macOS and Windows: builds, testing and features [fa53ef0].
+
+## [1.2.0] — 2026-11-18 (Windows)
+
+### Added
+- .cue sheet support. Sheets can be UTF-8, UTF-16 or the ANSI code page. A missing `FILE` falls
+  back to the same name with another media extension. Consecutive tracks of one file switch
+  without reopening (gapless) [efa13d6].
+
+## [1.1.0] — 2026-11-17 (Windows)
+
+### Added
+- **Multichannel PCM output** (engine + WASAPI) [797be84].
+  - Multichannel sources go out untranscoded in their own layout and rate. Native AC3/DTS
+    still pass through.
+  - WASAPI tries the source rate and 48 kHz, side/back channel variants, and
+    s24-in-32 / s32 / s16 / float.
+  - Verified: the Samsung TV accepts 6 ch 24-bit/96 kHz over HDMI.
+  - `pcdump --mc-pcm` and `--track N`. `regress.sh` checks multichannel channel mapping and
+    track selection.
+- "Surround output" setting: Dolby Digital / DTS / Multichannel PCM / Off [797be84].
+- Audio track menu labelled with the current track, **A** cycles tracks, "PCM 5.1" badge
+  [797be84].
+- The app is shared as a single self-contained `.exe`, and the version is shown in Settings
+  [be8591f].
+- `SURROUND_DEBUG` logs start-up breadcrumbs [be8591f].
+
+## [1.0.0] — 2026-11-17 (Windows)
+
+First Windows 11 build: the same engine, with new back-ends and a WinUI 3 app.
+- **Step 1:** FFmpeg 9.0.2 (with the local patches) built with MSVC, plus a CMake + clang-cl
+  build of the engine and `pcdump`. `regress.sh` passes on Windows [ccfe799].
+- **Step 2:** WASAPI audio back-end [d11c144].
+  - Exclusive, event-driven IEC 61937 bitstream with the Dolby Digital / DTS subtypes.
+  - Shared float PCM.
+  - Bitstreaming only to digital outputs.
+  - `pctest devices` / `play`.
+  - Verified on the Samsung: the amp shows Dolby Digital. Over HDMI the TV refuses DTS, so DTS
+    mode falls back to PCM.
+- **Device hot-plug:** device change callback and lost-output detection. Playback reopens at
+  the same position when the output goes away (e.g. the TV changes input) [32d4a46].
+- **Step 3:** D3D11VA hardware video decoding (NV12/P010 textures shared with the renderer),
+  with software frames as BGRA [b91c4b4].
+- **Step 4:** WinUI 3 (C#, .NET 8) app on `playercore.dll` [7a17ceb].
+  - Playlist with search and drag/drop, device menu, output badge, single-key shortcuts.
+  - Full screen with auto-hiding controls.
+  - D3D11 video renderer.
+  - Settings stored as JSON with the macOS keys.
+- DPI-aware window size, remembered between runs (it was tiny at 300% scaling on a 4K TV)
+  [17afad4].
+- MilkDrop-style visualiser ported: HLSL shaders, the 13 presets, the audio analyser and a D3D11
+  renderer [9cae81a].
+- `build_win.ps1 -Package`: self-contained app folder + zip [453895a].
+
+## [1.0] — 2026-11-17 (macOS)
+
+First release: a native macOS player (SwiftUI + C engine on FFmpeg) built to get surround
+sound to an optical-only amp. The chain is Mac → HDMI → TV → optical → amp. The approach
+is modelled on Kodi's WASAPI-exclusive passthrough.
+
+### Added
+- **Surround as a bitstream** [037877f].
+  - Multichannel audio is decoded, downmixed to 5.1 when needed, encoded to Dolby Digital
+    (AC3), and sent as IEC 61937 through CoreAudio.
+  - CoreAudio setup: hog mode, mixing off, physical format switched to the TV's digital
+    format.
+  - Native AC3 passes through untouched.
+  - Encoded-silence keep-alive while paused or seeking, so the amp stays locked.
+  - The output is kept open between files.
+  - Never bitstreams to speakers or headphones.
+- **Playback** [037877f].
+  - Music and video (mp4, mkv, …), with VideoToolbox hardware video decoding.
+  - A/V sync to the audio clock, with an adjustable audio latency.
+  - Playlist, audio track selection, device picker with hot-plug handling, output badge.
+- **Playlist and builds** [b9a823d].
+  - App icon.
+  - Folder drag and drop (scanned recursively).
+  - Playlist search.
+  - Apple Silicon, Intel and universal builds.
+- **Visualiser and full screen** [6a002cb].
+  - MilkDrop 2-style visualiser (Metal, 13 original presets with blending), off by default.
+    When on it also replaces a file's video.
+  - Full-screen player with auto-hiding controls.
+- **DTS output:** transcode to DTS 5.1 as an alternative to Dolby Digital; in DTS mode native
+  DTS passes through too [fb50c99]. Includes a fix for an out-of-bounds read in FFmpeg's DTS
+  encoder (`patches/ffmpeg/`).
+
+### Changed
+- Engine restructured for porting: a portable core plus per-OS audio/video back-ends, stub
+  back-ends, the `pcdump` dump tool and the `regress.sh` behaviour tests. Output was verified
+  byte-identical before and after [47b22ca].
+- Project context for continuing development in CLAUDE.md and `docs/PORTING_WINDOWS.md`
+  [16a5b12, 2ed39d4].
