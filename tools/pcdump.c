@@ -126,6 +126,12 @@ int main(int argc, char **argv) {
     PCInfo info;
     pc_player_get_info(p, &info);
     printf("source: %s\noutput: %s\n", info.source_audio, info.output);
+    int art_size = 0;
+    const uint8_t *art = pc_player_cover_art(p, &art_size);
+    if (art && art_size > 0)
+        printf("cover art: %d bytes (%s)\n", art_size,
+               art_size > 3 && art[0] == 0xFF && art[1] == 0xD8 ? "JPEG" :
+               art_size > 3 && art[0] == 0x89 && art[1] == 'P' ? "PNG" : "other");
     int ntracks = pc_player_audio_track_count(p);
     for (int i = 0; ntracks > 1 && i < ntracks; i++) {
         char name[256];

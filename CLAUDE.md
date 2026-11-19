@@ -66,6 +66,11 @@ docs; this file is the context for continuing development.
       `End` boundary: if the next item is the next span of the same file it just switches
       `Current` (gapless, no reopen), otherwise it calls `Next()` (can overrun by up to ~200 ms).
       Embedded FLAC CUESHEET tags aren't read.
+    - **Artwork (Windows app):** embedded art first (`pc_player_cover_art`; `pcdump` prints a
+      `cover art:` line), else a .jpg/.jpeg/.png in the file's folder (`PlayerModel.FindFolderArt`:
+      same name as the file > cover/folder/front/album/albumart > names containing
+      cover/folder/front > first alphabetically). Shown when the visualiser is off and there's
+      no video. The Mac app has embedded art only.
     - **Not done on Windows:** cursor auto-hide only via ShowCursor, HDR (PQ) tone mapping,
       playlist persistence (not on Mac either).
     - Shortcuts: Mac ⌘ → Ctrl (Ctrl+←/→ prev/next, Ctrl+F search, Ctrl+O open, Ctrl+, settings).

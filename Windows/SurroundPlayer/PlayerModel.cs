@@ -630,6 +630,50 @@ public sealed class PlayerModel : Observable
         Duration = 0;
     }
 
+    private static readonly string[] ArtExtensions = { ".jpg", ".jpeg", ".png" };
+    private static readonly string[] ArtNames = { "cover", "folder", "front", "album", "albumart", "albumartlarge" };
+    private string? _folderArtPath;
+    private byte[]? _folderArt;
+
+    /// Artwork for a file without embedded art: a .jpg/.jpeg/.png in the same folder.
+    /// Preference: an image named like the media file, then the usual names (cover, folder,
+    /// front, ...), then names containing them ("Cover (front).jpg"), then the first image
+    /// alphabetically. The last image read is cached, so an album reads it once.
+    private byte[]? FolderArt(string mediaPath)
+    {
+        var pick = FindFolderArt(mediaPath);
+        if (pick == null) return null;
+        if (string.Equals(pick, _folderArtPath, StringComparison.OrdinalIgnoreCase)) return _folderArt;
+        byte[]? bytes = null;
+        try { if (new FileInfo(pick).Length <= 32 << 20) bytes = File.ReadAllBytes(pick); }
+        catch { }
+        _folderArtPath = pick;
+        _folderArt = bytes;
+        return bytes;
+    }
+
+    public static string? FindFolderArt(string mediaPath)
+    {
+        List<string> images;
+        try
+        {
+            var dir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(mediaPath));
+            if (dir == null) return null;
+            images = Directory.EnumerateFiles(dir)
+                .Where(f => ArtExtensions.Contains(System.IO.Path.GetExtension(f), StringComparer.OrdinalIgnoreCase))
+                .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+        catch { return null; }
+        if (images.Count == 0) return null;
+        static string Name(string f) => System.IO.Path.GetFileNameWithoutExtension(f);
+        string stem = Name(mediaPath);
+        return images.FirstOrDefault(f => Name(f).Equals(stem, StringComparison.OrdinalIgnoreCase))
+            ?? ArtNames.Select(n => images.FirstOrDefault(f => Name(f).Equals(n, StringComparison.OrdinalIgnoreCase)))
+                       .FirstOrDefault(f => f != null)
+            ?? images.FirstOrDefault(f => ArtNames.Take(3).Any(n => Name(f).Contains(n, StringComparison.OrdinalIgnoreCase)))
+            ?? images[0];
+    }
+
     private unsafe void LoadInfo(Track track)
     {
         Native.pc_player_get_info(_player, out var info);
@@ -659,7 +703,7 @@ public sealed class PlayerModel : Observable
             Marshal.Copy(art, bytes, 0, size);
             Artwork = bytes;
         }
-        else Artwork = null;
+        else Artwork = FolderArt(track.Path);
         // the hardware/software decode note is only known once frames arrive
         int gen = _generation;
         var t = _ui.CreateTimer();
