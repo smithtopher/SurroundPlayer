@@ -74,6 +74,11 @@ docs; this file is the context for continuing development.
     - **Not done on Windows:** cursor auto-hide only via ShowCursor, HDR (PQ) tone mapping,
       playlist persistence (not on Mac either).
     - Shortcuts: Mac ⌘ → Ctrl (Ctrl+←/→ prev/next, Ctrl+F search, Ctrl+O open, Ctrl+, settings).
+      Ctrl+R opens the Open Recent menu (Windows only; no menu bar there).
+    - **Open Recent (Windows, 2026-11-19):** a history button (DropDownButton) next to the
+      folder button, same rules as the Mac menu (see `recentFiles` below), in
+      `PlayerModel.NoteRecent/OpenRecent/RecentTitle`, menu built in `RecentMenu_Opening`.
+      Stored in settings.json `recentFiles`. The command line adds to it too.
   - **The Windows PC is connected the same way:** HDMI → Samsung TV → optical → AC3 amp.
     The user confirmed the testing rule below (silent files only) for it.
   - **Windows build (no PATH setup needed):**
@@ -254,8 +259,8 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
     (Mac: `PlayerModel.surroundOutput`, which sets them together with a single reopen).
   - Other: `avOffsetMs`, `visualizerEnabled`.
   - `recentFiles`: File > Open Recent, newest first, at most 10 paths. It records what the user
-    opened (files, folders or cue sheets, via Open…, drops, Finder), in `PlayerModel.add`.
-    Auto-advance doesn't add to it.
+    opened (files, folders or cue sheets, via Open…, drops, Finder), in `PlayerModel.add`
+    (Windows: `PlayerModel.Add`, the toolbar's history button). Auto-advance doesn't add to it.
 - **Version:** `CFBundleShortVersionString` in `Resources/Info.plist`, shown in Settings. Kept
   in step with the Windows `<Version>` (1.2.1 = same features on both).
 

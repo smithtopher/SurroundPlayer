@@ -19,8 +19,8 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
-    <!-- bump for each shared build: 1.1.0 = multichannel PCM, track menu, visualiser; 1.2.0 = .cue sheets; 1.2.1 = folder artwork -->
-    <Version>1.2.1</Version>
+    <!-- bump for each shared build: 1.1.0 = multichannel PCM, track menu, visualiser; 1.2.0 = .cue sheets; 1.2.1 = folder artwork; 1.2.2 = Open Recent -->
+    <Version>1.2.2</Version>
     <EngineDir>$(MSBuildThisFileDirectory)..\..\.build\win-release\</EngineDir>
   </PropertyGroup>
 

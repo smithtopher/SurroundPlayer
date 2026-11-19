@@ -36,6 +36,7 @@ Keys (in the player window, not while typing in the filter):
 | ← → / ↑ ↓ | ← → / ↑ ↓ | back/forward 10 s / 1 min |
 | ⌘← ⌘→ | Ctrl+← Ctrl+→ | previous / next track |
 | ⌘O / ⌘F / ⌘, | Ctrl+O / Ctrl+F / Ctrl+, | open / search / settings |
+| File ▸ Open Recent | Ctrl+R (or the history button) | recently opened files, folders and cue sheets |
 | F (or double-click) | F (or double-click) | full-screen player; Esc leaves |
 | V | V | visualiser on/off |
 | ] / [ | ] / [ (or N / P) | next / previous visualiser preset |
@@ -50,19 +51,20 @@ picture, and they and the cursor fade out after 3 s without mouse movement.
 | | macOS | Windows |
 |---|---|---|
 | Dolby Digital / DTS transcode and passthrough | ✓ | ✓ |
-| Multichannel PCM output (HDMI straight to an AVR, no transcoding) | — | ✓ |
-| Audio track menu | ✓ | ✓ (and the A key) |
+| Multichannel PCM output (HDMI straight to an AVR, no transcoding) | ✓ (not yet tried on HDMI) | ✓ |
+| Audio track menu (and the A key) | ✓ | ✓ |
 | Embedded cover art | ✓ | ✓ |
-| Folder art (`cover.jpg`, `folder.png`… next to the file) | — | ✓ |
-| `.cue` sheets (one big file split into tracks) | — | ✓ |
+| Folder art (`cover.jpg`, `folder.png`… next to the file) | ✓ | ✓ |
+| `.cue` sheets (one big file split into tracks) | ✓ | ✓ |
+| Open Recent (last 10 files, folders, cue sheets) | ✓ | ✓ |
 | Visualiser | ✓ | ✓ |
 
 **Artwork:** when the visualiser is off and the file has no video, the stage shows the
-file's embedded cover art. On Windows, a file without embedded art falls back to a
-.jpg/.jpeg/.png in the same folder: one named like the file, then `cover`, `folder`,
-`front`, `album`, then any name containing those, then the first image.
+file's embedded cover art. A file without embedded art falls back to a .jpg/.jpeg/.png in
+the same folder: one named like the file, then `cover`, `folder`, `front`, `album`, then
+any name containing those, then the first image.
 
-**Cue sheets (Windows):** adding a `.cue` (or a folder containing one) lists its tracks
+**Cue sheets:** adding a `.cue` (or a folder containing one) lists its tracks
 instead of the audio file it describes. Consecutive tracks of the same file play gaplessly.
 Sheets in UTF-8, UTF-16 or the system code page are read. A `FILE` that no longer exists
 falls back to the same name with another audio extension (e.g. a `.wav` later converted to
@@ -288,8 +290,9 @@ set to Dolby Digital (default) or DTS:
   - In Dolby Digital mode, DTS tracks are transcoded to AC3, in case the amp can't decode DTS.
 - **Stereo sources**: shared-mode PCM by default. Turn on "Also encode stereo sources" if
   your amp drops audio when switching between PCM and a bitstream.
-- **Multichannel PCM** (Windows only): nothing is transcoded; multichannel sources go out
-  as PCM in their own layout and rate over WASAPI exclusive. For HDMI connected directly
+- **Multichannel PCM:** nothing is transcoded; multichannel sources go out as PCM in their
+  own layout and rate with exclusive access (WASAPI exclusive, or CoreAudio hog mode with the
+  device's channel layout). For HDMI connected directly
   to an AV receiver; over optical only stereo would survive.
 - **Non-digital outputs** (speakers, headphones, Bluetooth): the engine refuses to bitstream
   and plays PCM, because IEC 61937 data played as PCM is loud noise.

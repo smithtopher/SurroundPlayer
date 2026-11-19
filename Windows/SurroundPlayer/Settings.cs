@@ -1,6 +1,7 @@
 // Persisted settings, same keys and defaults as the macOS app's UserDefaults
 // (domain local.surroundplayer), stored as JSON in %LOCALAPPDATA%\SurroundPlayer\settings.json.
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -19,6 +20,7 @@ public sealed class Settings
     public bool multichannelPcm { get; set; } = false;    // don't transcode: multichannel PCM (HDMI to an AVR)
     public double avOffsetMs { get; set; } = 0;
     public bool visualizerEnabled { get; set; } = false;
+    public List<string> recentFiles { get; set; } = new();   // Open Recent, newest first (max 10)
     // Windows only: last window size in DIPs (0 = default 1280x800)
     public double windowWidth { get; set; }
     public double windowHeight { get; set; }

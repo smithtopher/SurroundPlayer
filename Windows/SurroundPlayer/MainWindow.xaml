@@ -32,6 +32,12 @@
                 <Button Click="OpenFolder_Click" IsTabStop="False" ToolTipService.ToolTip="Add a folder">
                     <FontIcon Glyph="&#xE8F4;" FontSize="14" />
                 </Button>
+                <DropDownButton x:Name="RecentButton" IsTabStop="False" ToolTipService.ToolTip="Open recent (Ctrl+R)">
+                    <FontIcon Glyph="&#xE81C;" FontSize="14" />
+                    <DropDownButton.Flyout>
+                        <MenuFlyout x:Name="RecentMenu" Placement="BottomEdgeAlignedLeft" Opening="RecentMenu_Opening" />
+                    </DropDownButton.Flyout>
+                </DropDownButton>
             </StackPanel>
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
                 <DropDownButton x:Name="DeviceButton" IsTabStop="False" ToolTipService.ToolTip="Audio output device">

@@ -411,6 +411,27 @@ public sealed partial class MainWindow : Window
 
     private async void Settings_Click(object sender, RoutedEventArgs e) => await new SettingsDialog(Model, Root.XamlRoot).ShowAsync();
 
+    private void RecentMenu_Opening(object sender, object e)
+    {
+        RecentMenu.Items.Clear();
+        foreach (var path in Model.RecentFiles.ToList())
+        {
+            string glyph = Directory.Exists(path) ? ""                                   // Folder
+                : PlayerModel.IsCue(path) ? ""                                          // Document
+                : "";                                                                   // Audio
+            var item = new MenuFlyoutItem { Text = Model.RecentTitle(path), Icon = new FontIcon { Glyph = glyph } };
+            ToolTipService.SetToolTip(item, path);
+            item.Click += (_, _) => Model.OpenRecent(path);
+            RecentMenu.Items.Add(item);
+        }
+        if (Model.RecentFiles.Count == 0)
+            RecentMenu.Items.Add(new MenuFlyoutItem { Text = "No recent items", IsEnabled = false });
+        RecentMenu.Items.Add(new MenuFlyoutSeparator());
+        var clear = new MenuFlyoutItem { Text = "Clear Menu", IsEnabled = Model.RecentFiles.Count > 0 };
+        clear.Click += (_, _) => Model.ClearRecents();
+        RecentMenu.Items.Add(clear);
+    }
+
     private void DeviceMenu_Opening(object sender, object e)
     {
         DeviceMenu.Items.Clear();
@@ -555,6 +576,7 @@ public sealed partial class MainWindow : Window
         bool alt = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Menu).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
         if (ctrl && e.Key == VirtualKey.F) { SearchBox.Focus(FocusState.Keyboard); e.Handled = true; return; }
         if (ctrl && e.Key == VirtualKey.O) { Open_Click(this, new RoutedEventArgs()); e.Handled = true; return; }
+        if (ctrl && e.Key == VirtualKey.R) { RecentButton.Flyout.ShowAt(RecentButton); e.Handled = true; return; }
         if (ctrl && (int)e.Key == 188) { Settings_Click(this, new RoutedEventArgs()); e.Handled = true; return; }   // Ctrl+,
         var focused = FocusManager.GetFocusedElement(Root.XamlRoot);
         if (focused is TextBox || focused is AutoSuggestBox) return;

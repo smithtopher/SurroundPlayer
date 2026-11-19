@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.2] — 2026-11-19 (Windows)
+
+### Windows
+- **Open Recent:** a history button next to Open/Add folder (or **Ctrl+R**) lists the last 10
+  opened files, folders or cue sheets, with Clear Menu. Same rules as the Mac menu.
+
 ## [1.2.1] — 2026-11-19
 
 ### macOS

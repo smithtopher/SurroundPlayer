@@ -339,8 +339,9 @@ public sealed class PlayerModel : Observable
     /// Adds files and folders (folders scanned recursively off the UI thread).
     public async void Add(IEnumerable<string> paths, bool playFirst, int? insertAt = null)
     {
-        IsScanning = true;
         var list = paths.ToList();
+        NoteRecent(list);
+        IsScanning = true;
         var tracks = await Task.Run(() => Expand(list));
         IsScanning = false;
         if (tracks.Count == 0) return;
@@ -349,7 +350,7 @@ public sealed class PlayerModel : Observable
         if (playFirst) Play(tracks[0]);
     }
 
-    private static bool IsCue(string path) => System.IO.Path.GetExtension(path).Equals(".cue", StringComparison.OrdinalIgnoreCase);
+    public static bool IsCue(string path) => System.IO.Path.GetExtension(path).Equals(".cue", StringComparison.OrdinalIgnoreCase);
 
     /// Files and folders → playlist items. A .cue sheet becomes its tracks, and the audio
     /// files it covers aren't listed again on their own.
@@ -411,6 +412,68 @@ public sealed class PlayerModel : Observable
     }
 
     // ------------------------------------------------------------------ transport
+
+    // ------------------------------------------------------------------ Open Recent
+
+    public const int MaxRecents = 10;
+
+    /// What the user opened (files, folders or cue sheets, via Open, drops or the command
+    /// line), newest first. Auto-advance doesn't add to it. Same rules as the Mac app.
+    public IReadOnlyList<string> RecentFiles => _settings.recentFiles;
+
+    private void NoteRecent(IEnumerable<string> paths)
+    {
+        var list = _settings.recentFiles.ToList();
+        foreach (var p in paths.Reverse())   // keep the opened order: first path on top
+        {
+            string full;
+            try { full = System.IO.Path.GetFullPath(p); } catch { continue; }
+            list.RemoveAll(r => r.Equals(full, StringComparison.OrdinalIgnoreCase));
+            list.Insert(0, full);
+        }
+        SetRecents(list.Take(MaxRecents).ToList());
+    }
+
+    private void SetRecents(List<string> list)
+    {
+        _settings.recentFiles = list;
+        _settings.Save();
+        Raise(nameof(RecentFiles));
+    }
+
+    public void ClearRecents() => SetRecents(new List<string>());
+
+    /// Plays a recent item: a file already in the playlist plays in place; anything else
+    /// (a file not in the playlist, a folder, a cue sheet) is added and its first item played.
+    public void OpenRecent(string path)
+    {
+        if (!File.Exists(path) && !Directory.Exists(path))
+        {
+            SetRecents(_settings.recentFiles.Where(r => !r.Equals(path, StringComparison.OrdinalIgnoreCase)).ToList());
+            ErrorMessage = $"{System.IO.Path.GetFileName(path)} no longer exists";
+            return;
+        }
+        var existing = Playlist.FirstOrDefault(t => t.Cue == null &&
+            string.Equals(System.IO.Path.GetFullPath(t.Path), path, StringComparison.OrdinalIgnoreCase));
+        if (existing != null)
+        {
+            NoteRecent(new[] { path });
+            Play(existing);
+        }
+        else Add(new[] { path }, playFirst: true);
+    }
+
+    /// Menu title: the name, plus the parent folder when two recents share a name.
+    public string RecentTitle(string path)
+    {
+        string name = System.IO.Path.GetFileName(path.TrimEnd('\\', '/'));
+        if (name.Length == 0) return path;   // a drive root
+        bool clash = _settings.recentFiles.Count(r =>
+            System.IO.Path.GetFileName(r.TrimEnd('\\', '/')).Equals(name, StringComparison.OrdinalIgnoreCase)) > 1;
+        if (!clash) return name;
+        string parent = System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(path.TrimEnd('\\', '/')) ?? "");
+        return parent.Length > 0 ? $"{name} — {parent}" : name;
+    }
 
     public unsafe void Play(Track track, double start = 0, bool paused = false, int audioTrack = -1)
     {
