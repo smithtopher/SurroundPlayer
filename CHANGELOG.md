@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.0] — 2026-11-20 (Windows)
+
+### Windows
+- **Stereo upmix to 5.1**, as on the Mac (1.3.0): **Settings ▸ Stereo Upmix** (Off / Music / Movies & TV /
+  Wide / Custom, surround level, centre focus, front width, subwoofer level; Advanced: crossover,
+  copy/move bass, bass boost, rear delay, rear high-cut; also for videos), **U** toggles it, and
+  the badge shows "· UPMIX". The Windows FFmpeg is now built with libavfilter (the upmix filters).
+- Test runs can keep their own settings and playlist with `SURROUND_DATA_DIR`.
+
 ## [1.3.0] — 2026-11-20 (macOS)
 
 ### Added

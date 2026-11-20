@@ -76,8 +76,7 @@ public static class PlaylistFile
     public sealed record SessionTrack(string Path, CueTrack? Cue);
     public sealed record Session(int Version, List<SessionTrack> Tracks, int Current, double Position);
 
-    private static string SessionPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SurroundPlayer", "playlist.json");
+    private static string SessionPath => Path.Combine(Settings.DataDir, "playlist.json");
 
     public static void SaveSession(IReadOnlyList<Track> tracks, Track? current, double position)
     {

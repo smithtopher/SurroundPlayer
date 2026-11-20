@@ -1,5 +1,7 @@
 // Settings: port of SettingsView.swift (device, surround, sync). Changes apply at once,
 // like the macOS app (the model reopens the current file at the same position).
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -29,6 +31,18 @@ public sealed class SettingsDialog : ContentDialog
     private readonly Slider _latency = new() { Minimum = -500, Maximum = 1000, StepFrequency = 10, Header = "Audio latency" };
     private readonly TextBlock _latencyText = new() { VerticalAlignment = VerticalAlignment.Center, Width = 64, TextAlignment = TextAlignment.Right };
     private bool _loading;
+
+    // stereo upmix (port of the Mac's Settings > Stereo Upmix)
+    private readonly ComboBox _upmixMode = new() { Header = "Upmix stereo to 5.1", HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly TextBlock _upmixBlurb = Note("");
+    private readonly StackPanel _upmixControls = new() { Spacing = 10 };
+    private readonly CheckBox _upmixVideo = new() { Content = "Also for videos with stereo sound" };
+    private readonly List<(Slider Slider, TextBlock Label, Func<double> Get, Func<double, string> Format)> _upmixSliders = new();
+    private readonly ComboBox _upmixXover = new() { Header = "Bass crossover", HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly ComboBox _upmixMove = new() { Header = "Bass to subwoofer", HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly ComboBox _upmixHighcut = new() { Header = "Rear high-cut", HorizontalAlignment = HorizontalAlignment.Stretch };
+    private static readonly int[] Crossovers = { 60, 80, 100, 120, 150, 200, 250 };
+    private static readonly int[] Highcuts = { 0, 4000, 6000, 7000, 8000, 10000, 12000, 16000 };
 
     public SettingsDialog(PlayerModel model, XamlRoot root)
     {
@@ -62,6 +76,7 @@ public sealed class SettingsDialog : ContentDialog
             "mode, as Kodi does). The TV only has to forward it over optical to the amp. Stereo sources play as PCM unless " +
             "the option above is on; turn it on if your amp drops out when switching between PCM and surround."));
         panel.Children.Add(_dtsNote);
+        BuildUpmix(panel);
         panel.Children.Add(Section("Visualiser"));
         var vis = new ToggleSwitch { Header = "Show visualiser for music", IsOn = model.VisualizerEnabled };
         vis.Toggled += (_, _) => _m.VisualizerEnabled = vis.IsOn;
@@ -152,7 +167,119 @@ public sealed class SettingsDialog : ContentDialog
         _stereo.IsChecked = _m.StereoAsAC3;
         _latency.Value = _m.AvOffsetMs;
         _latencyText.Text = $"{(int)_m.AvOffsetMs} ms";
+        LoadUpmix();
         _loading = false;
+    }
+
+    // ------------------------------------------------------------------ stereo upmix
+
+    private void BuildUpmix(StackPanel panel)
+    {
+        panel.Children.Add(Section("Stereo Upmix"));
+        foreach (var t in PlayerModel.UpmixModeTitles) _upmixMode.Items.Add(t);
+        panel.Children.Add(_upmixMode);
+        panel.Children.Add(_upmixBlurb);
+        _upmixControls.Children.Add(_upmixVideo);
+        // dB sliders: the left end (-20) means off (-40 in the engine)
+        AddSlider("Surround level", -20, 6, 0.5, () => Math.Max(-20, _m.UpmixSurroundDb), v => _m.UpmixSurroundDb = v <= -20 ? -40 : v,
+                  v => v <= -20 ? "Off" : $"{v:+0.0;-0.0} dB");
+        AddSlider("Centre focus", 0, 1, 0.05, () => _m.UpmixCenter, v => _m.UpmixCenter = v,
+                  v => v < 0.05 ? "Phantom" : v > 0.95 ? "Locked" : $"{v * 100:0}%");
+        AddSlider("Front width", 0, 1, 0.05, () => _m.UpmixWidth, v => _m.UpmixWidth = v,
+                  v => Math.Abs(v - 0.5) < 0.01 ? "As recorded" : $"{v * 100:0}%");
+        AddSlider("Subwoofer (LFE)", -20, 6, 0.5, () => Math.Max(-20, _m.UpmixLfeDb), v => _m.UpmixLfeDb = v <= -20 ? -40 : v,
+                  v => v <= -20 ? "Off" : $"{v:+0.0;-0.0} dB");
+
+        var adv = new StackPanel { Spacing = 10 };
+        foreach (var hz in Crossovers) _upmixXover.Items.Add($"{hz} Hz");
+        _upmixMove.Items.Add("Copy (main speakers keep it)");
+        _upmixMove.Items.Add("Move (small main speakers)");
+        foreach (var hz in Highcuts) _upmixHighcut.Items.Add(hz == 0 ? "Off" : $"{hz / 1000} kHz");
+        adv.Children.Add(_upmixXover);
+        adv.Children.Add(_upmixMove);
+        AddSlider("Bass boost", 0, 12, 0.5, () => _m.UpmixBassDb, v => _m.UpmixBassDb = v,
+                  v => v < 0.25 ? "Off" : $"+{v:0.0} dB", adv);
+        AddSlider("Rear delay", 0, 30, 1, () => _m.UpmixRearDelayMs, v => _m.UpmixRearDelayMs = v,
+                  v => v < 0.5 ? "Off" : $"{v:0} ms", adv);
+        adv.Children.Add(_upmixHighcut);
+        adv.Children.Add(Note(
+            "Crossover: bass below it goes to the subwoofer channel (changing it causes a short dropout). Most AV receivers " +
+            "already send the speakers' bass to the subwoofer, so a strong LFE level can double the bass. Rear delay keeps " +
+            "sounds anchored at the front; the high-cut makes the rears read as room sound rather than as speakers you can point at."));
+        _upmixControls.Children.Add(new Expander
+        {
+            Header = "Advanced", Content = adv,
+            HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+        });
+        _upmixControls.Children.Add(Note("Changes apply while playing. U turns upmix on and off. The output badge shows UPMIX while it is active."));
+        panel.Children.Add(_upmixControls);
+
+        _upmixMode.SelectionChanged += (_, _) =>
+        {
+            if (_loading || _upmixMode.SelectedIndex < 0) return;
+            _m.UpmixMode = (UpmixMode)_upmixMode.SelectedIndex;
+            Load();
+        };
+        _upmixVideo.Click += (_, _) => _m.UpmixIncludeVideo = _upmixVideo.IsChecked == true;
+        _upmixXover.SelectionChanged += (_, _) => { if (!_loading && _upmixXover.SelectedIndex >= 0) { _m.UpmixCrossoverHz = Crossovers[_upmixXover.SelectedIndex]; LoadUpmixMode(); } };
+        _upmixMove.SelectionChanged += (_, _) => { if (!_loading && _upmixMove.SelectedIndex >= 0) { _m.UpmixLfeMove = _upmixMove.SelectedIndex == 1; LoadUpmixMode(); } };
+        _upmixHighcut.SelectionChanged += (_, _) => { if (!_loading && _upmixHighcut.SelectedIndex >= 0) { _m.UpmixRearHighcutHz = Highcuts[_upmixHighcut.SelectedIndex]; LoadUpmixMode(); } };
+    }
+
+    private void AddSlider(string title, double min, double max, double step, Func<double> get, Action<double> set,
+                           Func<double, string> format, StackPanel? into = null)
+    {
+        var slider = new Slider { Header = title, Minimum = min, Maximum = max, StepFrequency = step, IsThumbToolTipEnabled = false };
+        var label = new TextBlock { VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 0, 8), Width = 84, TextAlignment = TextAlignment.Right };
+        var row = new Grid { ColumnSpacing = 8 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.Children.Add(slider);
+        Grid.SetColumn(label, 1);
+        row.Children.Add(label);
+        (into ?? _upmixControls).Children.Add(row);
+        _upmixSliders.Add((slider, label, get, format));
+        slider.ValueChanged += (_, e) =>
+        {
+            label.Text = format(e.NewValue);
+            if (_loading) return;
+            set(e.NewValue);
+            LoadUpmixMode();   // moving a slider turns a preset into Custom
+        };
+    }
+
+    private void LoadUpmix()
+    {
+        LoadUpmixMode();
+        bool wasLoading = _loading;
+        _loading = true;
+        _upmixVideo.IsChecked = _m.UpmixIncludeVideo;
+        foreach (var (slider, label, get, format) in _upmixSliders)
+        {
+            slider.Value = get();
+            label.Text = format(slider.Value);
+        }
+        _upmixXover.SelectedIndex = Math.Max(0, Array.IndexOf(Crossovers, _m.UpmixCrossoverHz));
+        _upmixMove.SelectedIndex = _m.UpmixLfeMove ? 1 : 0;
+        _upmixHighcut.SelectedIndex = Math.Max(0, Array.IndexOf(Highcuts, _m.UpmixRearHighcutHz));
+        _loading = wasLoading;
+    }
+
+    /// The mode box and what depends on it (a slider change can turn a preset into Custom).
+    private void LoadUpmixMode()
+    {
+        bool wasLoading = _loading;
+        _loading = true;
+        _upmixMode.SelectedIndex = (int)_m.UpmixMode;
+        bool on = _m.UpmixMode != UpmixMode.Off;
+        _upmixBlurb.Text = PlayerModel.UpmixModeBlurbs[(int)_m.UpmixMode] + (_m.UpmixAvailable ? ""
+            : " Needs a surround output above (Dolby Digital, DTS or Multichannel PCM).");
+        _upmixControls.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        _upmixControls.IsHitTestVisible = _m.UpmixAvailable;
+        _upmixControls.Opacity = _m.UpmixAvailable ? 1 : 0.5;
+        // with upmix on, stereo is always encoded as 5.1, so "Also encode stereo sources" is moot
+        _stereo.IsEnabled = !on;
+        _loading = wasLoading;
     }
 
     private static TextBlock Section(string text) =>

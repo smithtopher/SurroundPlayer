@@ -283,9 +283,11 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
   Mac UI: Settings > Stereo Upmix (mode Off/Music/Movies & TV/Wide/Custom; sliders surround,
   centre focus, width, LFE; Advanced: crossover, copy/move bass, bass boost, rear delay, rear
   high-cut), U key, Playback menu, badge " · UPMIX". `Upmix.swift` holds presets and keys.
-  **Windows: not ported yet.** The engine change needs FFmpeg rebuilt with avfilter
-  (`build_ffmpeg_win.sh` stamp v2 forces it) and CMake now links avfilter + pc_upmix.c: both
-  edited on the Mac, **unbuilt on Windows**. Then port the UI with the same `upmix*` keys.
+  **Windows (1.3.0, 2026-11-20):** FFmpeg rebuilt with the filters, CMake links avfilter +
+  pc_upmix.c. `PlayerModel.Upmix.cs` (presets, same `upmix*` keys and defaults in settings.json,
+  `PushUpmix` before every open and on every change; on/off and include-video reopen), Settings
+  dialog "Stereo Upmix" (mode, blurb, include video, four sliders, Advanced expander), U key,
+  badge " · UPMIX" from `pc_player_upmix_active`.
 - **Source format:** `PCInfo.source_rate` / `source_bits` (`audio_stream_bits`:
   `bits_per_raw_sample`, else the sample size of lossless/PCM codecs, else 0 = lossy). The
   source description ends ", 24-bit". Windows shows "24-bit / 96 kHz" beside the output badge
@@ -359,6 +361,10 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
   stereo upmix, Windows 1.3.0 once its UI is ported).
 
 ## Testing — IMPORTANT
+- **Windows: run test copies of the app with `SURROUND_DATA_DIR=<scratch folder>`.** The app then
+  keeps settings.json and playlist.json there instead of `%LOCALAPPDATA%\SurroundPlayer` (the
+  user's real settings, recents and saved playlist). Never delete or overwrite files in
+  `%LOCALAPPDATA%\SurroundPlayer`.
 - **Never touch the user's real app data.** `~/Library/Application Support/SurroundPlayer/playlist.json`
   (saved playlist; the SwiftPM debug binary uses it too) and the `local.surroundplayer` defaults
   domain hold the user's playlist, recents and settings. On 2026-11-20 a test cleanup deleted the

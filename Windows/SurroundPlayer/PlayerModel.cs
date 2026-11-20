@@ -129,6 +129,7 @@ public sealed partial class PlayerModel : Observable
         };
         _deviceCb = ctx => { DebugTrace.Log("device change notification"); _ui.TryEnqueue(RefreshDevices); };
         Native.pc_player_set_callbacks(_player, _videoCb, _eventCb, IntPtr.Zero);
+        PushUpmix();
         DebugTrace.Log("model: device callback");
         Native.pc_set_device_change_callback(_deviceCb, IntPtr.Zero);
         DebugTrace.Log("model: list devices");
@@ -785,6 +786,7 @@ public sealed partial class PlayerModel : Observable
         CurrentAudioTrack = -1;
         SubtitleTracks = Array.Empty<string>();
         CurrentSubtitleTrack = -1;
+        UpmixActive = false;
         Duration = 0;
     }
 
@@ -857,6 +859,7 @@ public sealed partial class PlayerModel : Observable
             fixed (byte* b = buf) { Native.pc_player_audio_track_name(_player, i, b, 256); names.Add(Native.Str(b, 256)); }
         AudioTracks = names;
         CurrentAudioTrack = Native.pc_player_current_audio_track(_player);
+        UpmixActive = Native.pc_player_upmix_active(_player) != 0;
         LoadSubtitles(track);
         IntPtr art = Native.pc_player_cover_art(_player, out int size);
         if (art != IntPtr.Zero && size > 0)

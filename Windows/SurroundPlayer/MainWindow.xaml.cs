@@ -225,7 +225,8 @@ public sealed partial class MainWindow : Window
 
         OutputBadge.Visibility = Model.OutputMode >= 0 ? Visibility.Visible : Visibility.Collapsed;
         bool bs = Model.IsBitstreaming;
-        OutputBadgeText.Text = bs ? (Model.BitstreamCodecName.Length == 0 ? "BITSTREAM" : Model.BitstreamCodecName.ToUpperInvariant()) : Model.PcmBadge;
+        OutputBadgeText.Text = (bs ? (Model.BitstreamCodecName.Length == 0 ? "BITSTREAM" : Model.BitstreamCodecName.ToUpperInvariant()) : Model.PcmBadge)
+                               + (Model.UpmixActive ? " · UPMIX" : "");
         OutputBadge.Background = bs ? (Brush)Application.Current.Resources["AccentFillColorDefaultBrush"]
                                     : (Brush)Application.Current.Resources["ControlFillColorSecondaryBrush"];
         OutputBadgeText.Foreground = bs ? (Brush)Application.Current.Resources["TextOnAccentFillColorPrimaryBrush"]
@@ -850,6 +851,7 @@ public sealed partial class MainWindow : Window
             case VirtualKey.L: Model.VisLocked = !Model.VisLocked; break;
             case VirtualKey.A: Model.CycleAudioTrack(); break;
             case VirtualKey.S: Model.CycleSubtitleTrack(); break;
+            case VirtualKey.U: Model.ToggleUpmix(); break;
             case VirtualKey.Escape when _fullScreen: ToggleFullScreen(); break;
             default: return;
         }

@@ -100,6 +100,19 @@ internal static unsafe class Native
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern void pc_player_audio_track_name(IntPtr p, int index, byte* buf, int len);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int pc_player_current_audio_track(IntPtr p);
 
+    // stereo upmix (mirrors PCUpmix in playercore.h)
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PCUpmix
+    {
+        public int enabled, include_video;
+        public float surround_db, center, width, lfe_db;
+        public int crossover_hz, lfe_move;
+        public float bass_db, rear_delay_ms;
+        public int rear_highcut_hz;
+    }
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern void pc_player_set_upmix(IntPtr p, ref PCUpmix u);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int pc_player_upmix_active(IntPtr p);
+
     // subtitles
     public const int PC_SUB_NONE = 0, PC_SUB_TEXT = 1, PC_SUB_BITMAP = 2;
     [StructLayout(LayoutKind.Sequential)]
