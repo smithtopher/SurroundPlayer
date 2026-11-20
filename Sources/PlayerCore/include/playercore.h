@@ -36,6 +36,7 @@ typedef enum {
 typedef enum {
     PC_EVENT_EOF = 1,
     PC_EVENT_ERROR = 2,
+    PC_EVENT_NEXT = 3,     // gapless: playback has crossed into the file given to pc_player_set_next
 } PCEvent;
 
 typedef struct {
@@ -195,6 +196,19 @@ typedef struct {
 } PCUpmix;
 
 PC_API void pc_player_set_upmix(PCPlayer *p, const PCUpmix *u);
+
+// Gapless playback. Tell the player which file comes after the open one (NULL: none); call it
+// after each open and after each PC_EVENT_NEXT. When the current file ends, the next one's audio
+// continues in the same output stream with no gap, provided it would play the same way (audio
+// only, no subtitles, same output mode, codec, upmix and multichannel layout; not passthrough);
+// otherwise playback ends as usual (PC_EVENT_EOF). The demuxer reads ahead, so the switch is
+// prepared up to ~10 s before it is heard; PC_EVENT_NEXT fires when the join is heard, and from
+// then pc_player_get_info, pc_player_position (relative to the new file), cover art and the
+// audio track list describe the new file. While a switch is prepared but not yet heard,
+// pc_player_next_pending returns 1: a seek then applies to the next file, so to seek in the
+// current one, reopen it instead.
+PC_API void pc_player_set_next(PCPlayer *p, const char *path);
+PC_API int pc_player_next_pending(PCPlayer *p);
 // 1 while the open file is being upmixed (the output description also says so).
 PC_API int pc_player_upmix_active(PCPlayer *p);
 

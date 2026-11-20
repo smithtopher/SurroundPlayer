@@ -12,7 +12,7 @@ internal static unsafe class Native
 
     public const int PC_MODE_PCM = 0, PC_MODE_TRANSCODE = 1, PC_MODE_PASSTHROUGH = 2;
     public const int PC_CODEC_AC3 = 0, PC_CODEC_DTS = 1;
-    public const int PC_EVENT_EOF = 1, PC_EVENT_ERROR = 2;
+    public const int PC_EVENT_EOF = 1, PC_EVENT_ERROR = 2, PC_EVENT_NEXT = 3;
     public const int PC_FRAME_D3D11 = 1, PC_FRAME_BGRA = 2;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -111,6 +111,11 @@ internal static unsafe class Native
         public int rear_highcut_hz;
     }
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern void pc_player_set_upmix(IntPtr p, ref PCUpmix u);
+
+    // gapless playback
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern void pc_player_set_next(IntPtr p,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string? path);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int pc_player_next_pending(IntPtr p);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern int pc_player_upmix_active(IntPtr p);
 
     // subtitles

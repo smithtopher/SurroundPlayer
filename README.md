@@ -64,6 +64,7 @@ picture, and they and the cursor fade out after 3 s without mouse movement.
 | `.cue` sheets (one big file split into tracks) | ✓ | ✓ |
 | Open Recent (last 10 files, folders, cue sheets) | ✓ | ✓ |
 | Playlist restored at launch; save/open `.m3u8` playlists | — | ✓ |
+| Gapless playback between album tracks | — (engine ready) | ✓ |
 | Subtitles (embedded text and bitmap tracks, `.srt`/`.ass`/`.vtt` files) | — (engine ready) | ✓ |
 | Visualiser | ✓ | ✓ |
 

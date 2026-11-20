@@ -19,10 +19,12 @@
 #include <string.h>
 
 static _Atomic int done;
+static _Atomic int next_started;   // gapless: PC_EVENT_NEXT seen (printed by the main loop)
 
 static void on_event(void *ctx, int event, const char *msg) {
     (void)ctx;
     if (event == PC_EVENT_EOF) atomic_store(&done, 1);
+    if (event == PC_EVENT_NEXT) atomic_fetch_add(&next_started, 1);
     if (event == PC_EVENT_ERROR) { fprintf(stderr, "error: %s\n", msg ? msg : "?"); atomic_store(&done, 1); }
 }
 
@@ -94,6 +96,7 @@ int main(int argc, char **argv) {
                         "       pcdump devices\n"
                         "       pcdump watch [--seconds N]\n"
                         "       pcdump play <media> [--device UID] [--pcm] [--dts] [--stereo] [--mc-pcm] [--track N] [--seconds N] [--debug]\n"
+                        "         [--then <media2>]  (gapless: continue into media2; also for dumps)\n"
                         "         [--sub N] [--sub-file F]  (select a subtitle track / add a file; prints changes)\n"
                         "         (play reopens at the same position when the output is lost)\n");
         return 1;
@@ -115,6 +118,7 @@ int main(int argc, char **argv) {
     PCUpmix up = { .enabled = 0, .include_video = 1, .surround_db = -3, .center = 0.5f, .width = 0.5f, .lfe_db = -6,
                    .crossover_hz = 100, .lfe_move = 0, .bass_db = 0, .rear_delay_ms = 10, .rear_highcut_hz = 7000 };
     const char *sub_file = NULL;
+    const char *then_media = NULL;   // gapless: continue into this file
     for (int i = 3; i < argc; i++) {
         if (!strcmp(argv[i], "--pcm")) cfg.bitstream_enabled = 0;
         else if (!strcmp(argv[i], "--dts")) cfg.bitstream_codec = PC_CODEC_DTS;
@@ -126,6 +130,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--seconds") && i + 1 < argc) seconds = atof(argv[++i]);
         else if (!strcmp(argv[i], "--sub") && i + 1 < argc) sub_track = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--sub-file") && i + 1 < argc) sub_file = argv[++i];
+        else if (!strcmp(argv[i], "--then") && i + 1 < argc) then_media = argv[++i];
         else if (!strcmp(argv[i], "--upmix")) up.enabled = 1;
         else if (!strcmp(argv[i], "--upmix-set") && i + 1 < argc) {
             up.enabled = 1;
@@ -156,6 +161,7 @@ int main(int argc, char **argv) {
     pc_player_set_upmix(p, &up);
     char err[512];
     if (pc_player_open(p, media, &cfg, 0, err, sizeof(err)) != 0) { fprintf(stderr, "open failed: %s\n", err); return 2; }
+    if (then_media) pc_player_set_next(p, then_media);
     PCInfo info;
     pc_player_get_info(p, &info);
     printf("source: %s\noutput: %s\n", info.source_audio, info.output);
@@ -192,6 +198,11 @@ int main(int argc, char **argv) {
     while (!atomic_load(&done)) {
         pc_sleep_us(20000);
         int64_t now = pc_now_ns();
+        if (atomic_exchange(&next_started, 0)) {
+            PCInfo ni;
+            pc_player_get_info(p, &ni);
+            printf("next started: %s (position %.2f s)\n", ni.source_audio, pc_player_position(p));
+        }
         if (sub_track >= 0 && is_open) {   // print what a subtitle overlay would show, when it changes
             PCSubtitleState ss;
             pc_player_subtitle_state(p, &ss);

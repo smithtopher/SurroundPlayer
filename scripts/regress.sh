@@ -144,6 +144,13 @@ ff -f lavfi -i "aevalsrc=0.25*sin(2*PI*50*t)|0.25*sin(2*PI*50*t):s=48000:d=6" -t
 ff -f lavfi -i "aevalsrc=0.25*sin(2*PI*1000*t):s=48000:d=6" -t 6 -c:a flac "$W/up_mono.flac"
 ff -f lavfi -i "aevalsrc='if(eq(n,48000),0.5,0)|if(eq(n,48000),0.5,0)':s=48000:d=3" -t 3 -c:a flac "$W/up_imp.flac"
 run "$W/up_left.flac" "$W/u1.raw" --mc-pcm --upmix && up_check "upmix hard left" "$W/u1.raw" left
+# multichannel PCM upmix goes out like native 5.1: 5.1(side) at 48 kHz, whatever the source rate
+ff -f lavfi -i "aevalsrc=0.25*sin(2*PI*1000*t)|-0.25*sin(2*PI*1000*t):s=44100:d=6" -t 6 -c:a flac "$W/up_44k.flac"
+run "$W/up_44k.flac" "$W/u0.raw" --mc-pcm --upmix && {
+    grep -q "^output: PCM 5.1(side) 48000 Hz (upmixed from stereo)" "$W/log.txt" \
+        && pass "upmix pcm: 5.1(side) 48 kHz from a 44.1 kHz source" || fail "upmix pcm: $(grep '^output' "$W/log.txt")"
+    up_check "upmix pcm 44.1k ambience in the side surrounds" "$W/u0.raw" antiphase
+}
 run "$W/up_centre.flac" "$W/u2.raw" --mc-pcm --upmix && {
     up_check "upmix centred" "$W/u2.raw" centre
     grep -q "upmixed from stereo" "$W/log.txt" && pass "upmix: output says 'upmixed from stereo'" || fail "upmix: $(grep '^output' "$W/log.txt")"
@@ -173,6 +180,46 @@ run "$W/up_centre.flac" "$W/u10.spdif" --upmix && {
 }
 run "$W/up_centre.flac" "$W/u11.raw" && {
     grep -q "^output: PCM 2 ch" "$W/log.txt" && pass "upmix off: stereo stays stereo PCM" || fail "upmix off: $(grep '^output' "$W/log.txt")"
+}
+
+echo "Gapless (--then: one continuous sine split into two files at an odd sample)"
+ff -f lavfi -i "aevalsrc=0.4*sin(2*PI*441*t)|0.3*sin(2*PI*660*t+1):s=48000:d=6" -c:a pcm_s16le "$W/gl_whole.wav"
+ff -i "$W/gl_whole.wav" -af "atrim=end_sample=144077" -c:a flac "$W/gl_a.flac"
+ff -i "$W/gl_whole.wav" -af "atrim=start_sample=144077,asetpts=PTS-STARTPTS" -c:a flac "$W/gl_b.flac"
+ff -i "$W/gl_whole.wav" -f f32le -c:a pcm_f32le "$W/gl_ref.raw"
+run "$W/gl_a.flac" "$W/g1.raw" --then "$W/gl_b.flac" && {
+    grep -q "^next started: flac" "$W/log.txt" && pass "gapless: next file started" || fail "gapless: no 'next started' in $(cat "$W/log.txt")"
+    # the dump must be the unsplit original, sample for sample (allowing a leading offset)
+    r=$("$PY" -I -c "
+import sys
+from array import array
+d = array('f'); d.frombytes(open(sys.argv[1], 'rb').read())
+r = array('f'); r.frombytes(open(sys.argv[2], 'rb').read())
+k = next((i for i in range(0, min(len(d), 20000), 2) if abs(d[i] - r[0]) < 1e-6 and abs(d[i + 1] - r[1]) < 1e-6
+          and all(abs(d[i + j] - r[j]) < 1e-6 for j in range(2, 200))), None)
+if k is None: print('BAD no alignment'); sys.exit()
+n = min(len(r), len(d) - k)
+bad = max(abs(d[k + j] - r[j]) for j in range(n))
+print(('ok' if bad < 1e-6 and n == len(r) else 'BAD') + ' %d of %d samples, max diff %.2g' % (n // 2, len(r) // 2, bad))
+" "$W/g1.raw" "$W/gl_ref.raw")
+    case "$r" in ok*) pass "gapless pcm: bit-identical to the unsplit file (${r#ok })";; *) fail "gapless pcm: ${r#BAD }";; esac
+}
+# upmixed to Dolby Digital 5.1: the encoder and the upmix graph run on across the join, no dropout
+run "$W/gl_a.flac" "$W/g2.spdif" --then "$W/gl_b.flac" --upmix && {
+    ff -f spdif -i "$W/g2.spdif" -ac 2 -f f32le -c:a pcm_f32le "$W/g2.raw"
+    r=$("$PY" -I -c "
+import sys, math
+from array import array
+a = array('f'); a.frombytes(open(sys.argv[1], 'rb').read()); rate = 48000; w = 480
+rms = [math.sqrt(math.fsum(v * v for v in a[i * 2 * w:(i + 1) * 2 * w]) / (2 * w)) for i in range(len(a) // (2 * w))]
+mid = sorted(rms)[len(rms) // 2]; core = rms[50:-50]
+print(('ok' if len(rms) > 5.5 * rate / w and min(core) > 0.5 * mid else 'BAD') + ' %.2f s, quietest 10 ms window %.0f%% of median' % (len(a) / 2 / rate, 100 * min(core) / mid))
+" "$W/g2.raw")
+    case "$r" in ok*) pass "gapless ac3 upmix: no dropout at the join (${r#ok })";; *) fail "gapless ac3 upmix: ${r#BAD }";; esac
+}
+# a next file that would play differently (5.1 after stereo PCM) is not joined: playback just ends
+run "$W/gl_a.flac" "$W/g3.raw" --then "$W/src.flac" && {
+    grep -q "^next started" "$W/log.txt" && fail "gapless: joined a 5.1 file after stereo PCM" || pass "gapless: different output mode not joined"
 }
 
 [ $FAIL = 0 ] && echo "ALL PASSED" || echo "SOME CHECKS FAILED"

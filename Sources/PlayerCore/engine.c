@@ -275,6 +275,25 @@ struct PCPlayer {
     int64_t um_in, um_out;           // samples fed / taken out since um_t0
     AVFrame *um_frame;
 
+    // gapless (pc_player_set_next). The timeline runs on across files: a file's pts are its own
+    // (pts - start) plus the offset of the point where it joined.
+    char *next_path;                 // under lock: the file to continue into (NULL none)
+    double dmx_offset;               // under lock: timeline offset of the file being demuxed
+    double item_offset;              // under lock: timeline offset of the file being heard
+    AVRational a_tb;                 // audio thread: the decoded file's time base, start, offset
+    double a_start, a_offset;
+    AVCodecContext *sw_dec;          // demux -> audio thread with the switch marker (under lock)
+    AVRational sw_tb;
+    double sw_start, sw_offset;
+    _Atomic int pending;             // switch prepared (demuxing the next file), join not yet heard
+    double pend_offset;              // under lock: timeline position of the join (NAN until known)
+    PCInfo pend_info;                // the next file's info, swapped in when the join is heard
+    uint8_t *pend_art;
+    int pend_art_size;
+    AVFormatContext *old_fmt;        // the previous file's context, closed at the next switch/close
+    int mc_req_ch, mc_req_rate;      // exclusive PCM request this file made (gapless must match)
+    uint32_t mc_req_mask;
+
     // threads
     pc_thread th_demux, th_audio, th_video, th_present;
     int have_audio_thread, have_video_thread, threads_running;
@@ -606,7 +625,15 @@ int pc_player_vis_samples(PCPlayer *p, float *lr, int frames) {
     return got;
 }
 
+static void audio_switch_now(PCPlayer *p, double offset);
+
 static void audio_reset(PCPlayer *p) {
+    // a seek flushed a switch marker before it was reached: take the next file's decoder now
+    pc_mutex_lock(&p->lock);
+    int sw = p->sw_dec != NULL;
+    double swoff = p->sw_offset;
+    pc_mutex_unlock(&p->lock);
+    if (sw) audio_switch_now(p, swoff);
     tap_reset(p);
     pc_upmix_free(&p->um);      // rebuilt at the next frame (seek: a fresh timeline)
     if (p->adec) avcodec_flush_buffers(p->adec);
@@ -757,9 +784,8 @@ static int upmix_flush(PCPlayer *p, int serial) {
 }
 
 static int audio_frame(PCPlayer *p, AVFrame *f, int serial) {
-    AVStream *st = p->fmt->streams[p->astream];
     double pts = f->best_effort_timestamp != AV_NOPTS_VALUE
-                     ? f->best_effort_timestamp * av_q2d(st->time_base) - p->start_time : NAN;
+                     ? f->best_effort_timestamp * av_q2d(p->a_tb) - p->a_start + p->a_offset : NAN;
     double dur = f->sample_rate > 0 ? (double)f->nb_samples / f->sample_rate : 0;
     double target = atomic_load(&p->seek_target);
     if (!isnan(target) && !isnan(pts) && pts + dur < target) return 0;
@@ -826,10 +852,54 @@ static void audio_drain(PCPlayer *p, AVFrame *frame, int serial) {
     if (atomic_load(&p->aq.serial) == serial) atomic_store(&p->audio_eof, 1);
 }
 
+// Gapless: take the next file's decoder; its pts continue from `offset` on the timeline.
+static void audio_switch_now(PCPlayer *p, double offset) {
+    pc_mutex_lock(&p->lock);
+    AVCodecContext *nd = p->sw_dec;
+    p->sw_dec = NULL;
+    AVRational tb = p->sw_tb;
+    double start = p->sw_start;
+    pc_mutex_unlock(&p->lock);
+    if (!nd) return;
+    avcodec_free_context(&p->adec);
+    p->adec = nd;
+    p->a_tb = tb;
+    p->a_start = start;
+    p->a_offset = offset;
+}
+
+// The switch marker: the previous file's last frames out of its decoder, then the next file's
+// decoder in its place. swr, the upmix graph and the encoder keep running, so there is no gap.
+static void audio_switch(PCPlayer *p, AVFrame *frame, int serial) {
+    if (p->mode != PC_MODE_PASSTHROUGH && p->adec) {
+        avcodec_send_packet(p->adec, NULL);
+        while (avcodec_receive_frame(p->adec, frame) >= 0) {
+            int r = audio_frame(p, frame, serial);
+            av_frame_unref(frame);
+            if (r < 0) return;
+        }
+    }
+    // where the next file's first sample lands on the timeline
+    double join;
+    if (p->upmixing && p->um) join = p->um_t0 + (double)p->um_in / p->out_rate;
+    else if (!isnan(p->next_pts)) join = p->next_pts + (p->swr ? (double)swr_get_delay(p->swr, p->out_rate) / p->out_rate : 0);
+    else {
+        pc_mutex_lock(&p->lock);
+        join = p->sw_offset;
+        pc_mutex_unlock(&p->lock);
+    }
+    audio_switch_now(p, join);
+    pc_mutex_lock(&p->lock);
+    p->dmx_offset = join;
+    if (atomic_load(&p->pending) && isnan(p->pend_offset)) p->pend_offset = join;
+    pc_mutex_unlock(&p->lock);
+}
+
+#define PC_SWITCH_MARK (-100)   // stream_index of the switch marker in the audio queue
+
 static void *audio_thread(void *arg) {
     PCPlayer *p = arg;
     AVFrame *frame = av_frame_alloc();
-    AVStream *st = p->fmt->streams[p->astream];
     int serial = -1;
     while (!atomic_load(&p->quit)) {
         AVPacket *pkt = NULL;
@@ -839,16 +909,17 @@ static void *audio_thread(void *arg) {
         if (pserial != serial) { audio_reset(p); serial = pserial; }
         if (r == 0) { audio_drain(p, frame, serial); continue; }
         if (pserial != atomic_load(&p->aq.serial)) { av_packet_free(&pkt); continue; }
+        if (pkt->stream_index == PC_SWITCH_MARK) { audio_switch(p, frame, serial); av_packet_free(&pkt); continue; }
 
         if (p->mode == PC_MODE_PASSTHROUGH) {
-            double pts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts * av_q2d(st->time_base) - p->start_time : NAN;
+            double pts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts * av_q2d(p->a_tb) - p->a_start + p->a_offset : NAN;
             double target = atomic_load(&p->seek_target);
             if (isnan(target) || isnan(pts) || pts + 0.032 >= target) {
                 // passthrough sends the packets untouched; decode a copy only to feed the visualiser
                 if (p->adec && atomic_load(&p->vis_enabled) && avcodec_send_packet(p->adec, pkt) >= 0) {
                     while (avcodec_receive_frame(p->adec, frame) >= 0) {
                         double fpts = frame->best_effort_timestamp != AV_NOPTS_VALUE
-                                          ? frame->best_effort_timestamp * av_q2d(st->time_base) - p->start_time : NAN;
+                                          ? frame->best_effort_timestamp * av_q2d(p->a_tb) - p->a_start + p->a_offset : NAN;
                         tap_feed(p, frame, fpts);
                         av_frame_unref(frame);
                     }
@@ -941,9 +1012,43 @@ static void show(PCPlayer *p, VFrame *f) {
     fq_pop_id(&p->fq, f->id);
 }
 
+// Gapless: once the output clock reaches the join, the next file is the one being heard.
+static void check_next(PCPlayer *p) {
+    if (!atomic_load(&p->pending)) return;
+    pc_mutex_lock(&p->lock);
+    double at = p->pend_offset;
+    pc_mutex_unlock(&p->lock);
+    if (isnan(at)) return;
+    if (!isinf(at)) {
+        double c = p->out ? pc_out_clock(p->out) : NAN;
+        if (isnan(c) || c < at) return;
+    }
+    pc_mutex_lock(&p->lock);
+    p->item_offset = isinf(at) ? p->dmx_offset : at;
+    char output[sizeof(p->info.output)];
+    memcpy(output, p->info.output, sizeof(output));
+    int mode = p->info.mode;
+    char bsc[sizeof(p->info.bitstream_codec)];
+    memcpy(bsc, p->info.bitstream_codec, sizeof(bsc));
+    p->info = p->pend_info;
+    memcpy(p->info.output, output, sizeof(output));     // the output itself is unchanged
+    memcpy(p->info.bitstream_codec, bsc, sizeof(bsc));
+    p->info.mode = mode;
+    av_freep(&p->art);
+    p->art = p->pend_art;
+    p->art_size = p->pend_art_size;
+    p->pend_art = NULL;
+    p->pend_art_size = 0;
+    p->last_pos = p->item_offset;
+    atomic_store(&p->pending, 0);
+    pc_mutex_unlock(&p->lock);
+    if (p->ecb) p->ecb(p->cbctx, PC_EVENT_NEXT, NULL);
+}
+
 static void *present_thread(void *arg) {
     PCPlayer *p = arg;
     while (!atomic_load(&p->quit)) {
+        check_next(p);
         check_eof(p);
         if (p->vstream < 0) { pc_sleep_us(20000); continue; }
         VFrame f;
@@ -994,6 +1099,13 @@ static void *present_thread(void *arg) {
 #define READ_AHEAD_SECONDS 10.0
 #define READ_AHEAD_PACKETS 250     // for streams whose packets carry no duration
 
+static double queued_seconds(PCPlayer *p, PacketQueue *q, int stream) {
+    pc_mutex_lock(&q->m);
+    double dur = q->duration * av_q2d(p->fmt->streams[stream]->time_base);
+    pc_mutex_unlock(&q->m);
+    return dur;
+}
+
 static int queue_enough(PCPlayer *p, PacketQueue *q, int stream) {
     if (stream < 0) return 1;
     pc_mutex_lock(&q->m);
@@ -1007,7 +1119,11 @@ static void do_seek(PCPlayer *p, double pos) {
     int64_t ts = (int64_t)((pos + p->start_time) * AV_TIME_BASE);
     if (avformat_seek_file(p->fmt, -1, INT64_MIN, ts, ts, 0) < 0)
         avformat_seek_file(p->fmt, -1, INT64_MIN, ts, INT64_MAX, 0);
-    atomic_store(&p->seek_target, pos);
+    pc_mutex_lock(&p->lock);
+    double off = p->dmx_offset;
+    if (atomic_load(&p->pending)) p->pend_offset = -INFINITY;   // the next file is now the one heard
+    pc_mutex_unlock(&p->lock);
+    atomic_store(&p->seek_target, pos + off);
     pq_flush(&p->aq);
     pq_flush(&p->vq);
     fq_flush(&p->fq, atomic_load(&p->vq.serial));
@@ -1023,7 +1139,7 @@ static void do_seek(PCPlayer *p, double pos) {
     atomic_store(&p->force_show, 1);
     pc_mutex_lock(&p->lock);
     p->ext_started = 0;
-    p->ext_paused_pts = pos;
+    p->ext_paused_pts = pos + off;
     pc_mutex_unlock(&p->lock);
 }
 
@@ -1045,6 +1161,144 @@ static void decode_subtitle(PCPlayer *p, int track, AVPacket *pkt) {
     subs_add(p->subt[track].store, &sub, start, end, dec->width, dec->height);
     avsubtitle_free(&sub);
     if (!isnan(start)) subs_prune(p->subt[track].store, start - 120);   // the demuxer runs a little ahead
+}
+
+static const char *meta(AVDictionary *d, const char *k);
+static int audio_stream_bits(const AVCodecParameters *c);
+static int64_t audio_stream_bitrate(AVFormatContext *fmt, AVStream *st);
+static void describe_audio_stream(AVStream *st, char *buf, int len);
+
+// Gapless: would the next file (audio stream `*as`) play exactly the way the current one does?
+// Mirrors setup_audio's decisions without touching the device.
+static int gapless_ok(PCPlayer *p, AVFormatContext *nf, int *as) {
+    if (p->vstream >= 0 || p->mode == PC_MODE_PASSTHROUGH || atomic_load(&p->n_sub) > 0 || !p->out) return 0;
+    for (unsigned i = 0; i < nf->nb_streams; i++) {
+        AVStream *st = nf->streams[i];
+        enum AVMediaType t = st->codecpar->codec_type;
+        if (t == AVMEDIA_TYPE_VIDEO && !(st->disposition & AV_DISPOSITION_ATTACHED_PIC)) return 0;
+        if (t == AVMEDIA_TYPE_SUBTITLE) return 0;
+    }
+    int a = av_find_best_stream(nf, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
+    if (a < 0) return 0;
+    AVCodecParameters *par = nf->streams[a]->codecpar;
+    const PCConfig *cfg = &p->cfg;
+    int src_ch = par->ch_layout.nb_channels;
+    PCUpmix up = upmix_settings(p);
+    int up_src = up.enabled && src_ch >= 1 && src_ch <= 2;
+    int mode = PC_MODE_PCM;
+    if (cfg->bitstream_enabled) {
+        int dts = cfg->bitstream_codec == PC_CODEC_DTS;
+        int native_ac3 = par->codec_id == AV_CODEC_ID_AC3 && par->sample_rate == 48000;
+        int native_dts = dts && par->codec_id == AV_CODEC_ID_DTS && par->sample_rate == 48000 &&
+                         par->profile != AV_PROFILE_DTS_EXPRESS;
+        if (cfg->passthrough && (native_ac3 || native_dts) && !up_src) return 0;
+        if (!cfg->multichannel_pcm && (src_ch > 2 || cfg->stereo_bitstream || up_src)) mode = PC_MODE_TRANSCODE;
+    }
+    if (mode != p->mode) return 0;
+    if (mode == PC_MODE_TRANSCODE) {
+        int ch = up_src || src_ch > 2 ? 6 : 2;
+        if (ch != p->out_layout.nb_channels || up_src != p->upmixing) return 0;
+    } else {
+        int want_excl = cfg->multichannel_pcm && (src_ch > 2 || up_src);
+        if (want_excl != (p->mc_req_ch > 0)) return 0;
+        if (want_excl) {
+            AVChannelLayout lay = { 0 };
+            if (up_src) av_channel_layout_copy(&lay, &(AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1);
+            else if (par->ch_layout.order == AV_CHANNEL_ORDER_NATIVE && src_ch <= 8) av_channel_layout_copy(&lay, &par->ch_layout);
+            else av_channel_layout_default(&lay, FFMIN(src_ch, 8));
+            int rate = up_src ? 48000 : par->sample_rate > 0 ? par->sample_rate : 48000;
+            int same = lay.nb_channels == p->mc_req_ch && (uint32_t)lay.u.mask == p->mc_req_mask && rate == p->mc_req_rate;
+            av_channel_layout_uninit(&lay);
+            if (!same) return 0;
+        }
+        if ((up_src && p->out_type == PC_STREAM_PCM_EXCLUSIVE) != p->upmixing) return 0;
+    }
+    *as = a;
+    return 1;
+}
+
+// Gapless: at the end of the current file, continue into the next one if it is eligible.
+// Returns 1 when the demuxer now reads the next file (a switch marker is queued for the audio
+// thread), 0 to end playback as usual.
+static int try_gapless(PCPlayer *p) {
+    pc_mutex_lock(&p->lock);
+    char *path = p->next_path;
+    p->next_path = NULL;
+    pc_mutex_unlock(&p->lock);
+    if (!path) return 0;
+    AVFormatContext *nf = NULL;
+    AVCodecContext *nd = NULL;
+    int as = -1;
+    int ok = avformat_open_input(&nf, path, NULL, NULL) >= 0 && avformat_find_stream_info(nf, NULL) >= 0 &&
+             gapless_ok(p, nf, &as) && open_decoder(nf->streams[as], &nd, NULL) >= 0;
+    av_free(path);
+    if (!ok) {
+        avcodec_free_context(&nd);
+        avformat_close_input(&nf);
+        return 0;
+    }
+    double nstart = nf->start_time != AV_NOPTS_VALUE ? nf->start_time / (double)AV_TIME_BASE : 0;
+    AVStream *ast = nf->streams[as];
+    PCInfo ni;
+    memset(&ni, 0, sizeof(ni));
+    uint8_t *art = NULL;
+    int art_size = 0, n_audio = 0, tracks[MAX_AUDIO_TRACKS], cur = -1;
+    for (unsigned i = 0; i < nf->nb_streams; i++) {
+        AVStream *st = nf->streams[i];
+        st->discard = (int)i == as ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
+        if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && n_audio < MAX_AUDIO_TRACKS) {
+            if ((int)i == as) cur = n_audio;
+            tracks[n_audio++] = (int)i;
+        }
+        if ((st->disposition & AV_DISPOSITION_ATTACHED_PIC) && !art && st->attached_pic.size > 0) {
+            art = av_memdup(st->attached_pic.data, st->attached_pic.size);
+            art_size = art ? st->attached_pic.size : 0;
+        }
+    }
+    const char *title = meta(nf->metadata, "title");
+    if (!title) title = meta(ast->metadata, "title");
+    copy_str(ni.title, sizeof(ni.title), title);
+    const char *artist = meta(nf->metadata, "artist");
+    if (!artist) artist = meta(nf->metadata, "album_artist");
+    copy_str(ni.artist, sizeof(ni.artist), artist);
+    copy_str(ni.album, sizeof(ni.album), meta(nf->metadata, "album"));
+    ni.duration = nf->duration != AV_NOPTS_VALUE ? nf->duration / (double)AV_TIME_BASE : 0;
+    describe_audio_stream(ast, ni.source_audio, sizeof(ni.source_audio));
+    ni.source_rate = ast->codecpar->sample_rate;
+    ni.source_bits = audio_stream_bits(ast->codecpar);
+    int64_t br = audio_stream_bitrate(nf, ast);
+    ni.source_bitrate = br > INT32_MAX ? INT32_MAX : (int)br;
+
+    double old_dur = p->fmt->duration != AV_NOPTS_VALUE ? p->fmt->duration / (double)AV_TIME_BASE : 0;
+    pc_mutex_lock(&p->lock);
+    double prov = p->dmx_offset + old_dur;   // refined by the audio thread when it reaches the join
+    avcodec_free_context(&p->sw_dec);
+    p->sw_dec = nd;
+    p->sw_tb = ast->time_base;
+    p->sw_start = nstart;
+    p->sw_offset = prov;
+    p->pend_info = ni;
+    av_freep(&p->pend_art);
+    p->pend_art = art;
+    p->pend_art_size = art_size;
+    p->pend_offset = NAN;
+    atomic_store(&p->pending, 1);
+    p->dmx_offset = prov;
+    // the demuxer now reads the next file; the previous context stays alive until the next switch
+    if (p->old_fmt) avformat_close_input(&p->old_fmt);
+    p->old_fmt = p->fmt;
+    p->fmt = nf;
+    p->astream = as;
+    p->start_time = nstart;
+    memcpy(p->audio_tracks, tracks, sizeof(int) * (size_t)n_audio);
+    p->n_audio = n_audio;
+    p->cur_track = cur;
+    pc_mutex_unlock(&p->lock);
+    AVPacket *m = av_packet_alloc();
+    m->stream_index = PC_SWITCH_MARK;
+    pq_put(&p->aq, m);
+    av_packet_free(&m);
+    return 1;
 }
 
 static void *demux_thread(void *arg) {
@@ -1069,6 +1323,14 @@ static void *demux_thread(void *arg) {
         int ret = av_read_frame(p->fmt, pkt);
         if (ret < 0) {
             if (ret != AVERROR(EAGAIN) && !atomic_load(&p->demux_eof)) {
+                if (p->astream >= 0 && try_gapless(p)) continue;   // gapless: on into the next file
+                // An audio-only file can be read to the end within moments of opening (short tracks,
+                // 10 s read-ahead), before the app has named the next file. End the stream only once
+                // little audio is left, so a pc_player_set_next that comes a little late still joins.
+                if (p->astream >= 0 && p->vstream < 0 && queued_seconds(p, &p->aq, p->astream) > 1.0) {
+                    pc_sleep_us(10000);
+                    continue;
+                }
                 if (p->astream >= 0) pq_put(&p->aq, NULL);
                 if (p->vstream >= 0) pq_put(&p->vq, NULL);
                 atomic_store(&p->demux_eof, 1);
@@ -1248,13 +1510,20 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
         // (an upmixed stereo source: 5.1 at its own rate)
         PCDeviceFormat req = { 0 };
         AVChannelLayout lay = { 0 };
-        if (up_src) av_channel_layout_copy(&lay, &(AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1_BACK);
+        // An upmix goes out exactly like a native 5.1 track: 5.1 with *side* surrounds (the
+        // layout Windows' "5.1" speaker setup and most HDMI sinks expect; the graph maps the
+        // filter's back surrounds onto them) at 48 kHz. Asking for 5.1(back) at the source's
+        // 44.1 kHz was accepted by drivers but left some HDMI receivers playing only L/R.
+        if (up_src) av_channel_layout_copy(&lay, &(AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1);
         else if (par->ch_layout.order == AV_CHANNEL_ORDER_NATIVE && src_ch <= 8) av_channel_layout_copy(&lay, &par->ch_layout);
         else av_channel_layout_default(&lay, FFMIN(src_ch, 8));
         req.channels = lay.nb_channels;
-        req.rate = par->sample_rate > 0 ? par->sample_rate : 48000;
+        req.rate = up_src ? 48000 : par->sample_rate > 0 ? par->sample_rate : 48000;
         req.channel_mask = (uint32_t)lay.u.mask;   // FFmpeg AV_CH_* bits == WAVE SPEAKER_* bits
         av_channel_layout_uninit(&lay);
+        p->mc_req_ch = req.channels;   // gapless continues only into files making the same request
+        p->mc_req_mask = req.channel_mask;
+        p->mc_req_rate = req.rate;
         p->out = take_output(p, PC_STREAM_PCM_EXCLUSIVE, 0, &req, oerr, sizeof(oerr));
         if (p->out) pcm_type = PC_STREAM_PCM_EXCLUSIVE;
         else snprintf(fallback, sizeof(fallback), " [multichannel PCM unavailable: %s]", oerr);
@@ -1372,6 +1641,11 @@ int pc_player_open(PCPlayer *p, const char *path, const PCConfig *cfg, int pause
     atomic_store(&p->cur_sub, -1);
     p->sub_last_track = -1;
     p->cur_track = -1;
+    p->mc_req_ch = p->mc_req_rate = 0;
+    p->mc_req_mask = 0;
+    p->dmx_offset = p->item_offset = p->a_offset = 0;
+    p->pend_offset = NAN;
+    atomic_store(&p->pending, 0);
 
     if (avformat_open_input(&p->fmt, path, NULL, NULL) < 0) {
         snprintf(err, errlen, "Could not open file");
@@ -1430,6 +1704,8 @@ int pc_player_open(PCPlayer *p, const char *path, const PCConfig *cfg, int pause
 
     if (p->astream >= 0) {
         p->fmt->streams[p->astream]->discard = AVDISCARD_DEFAULT;
+        p->a_tb = p->fmt->streams[p->astream]->time_base;
+        p->a_start = p->start_time;
         if (setup_audio(p, err, errlen) < 0) goto fail;
     }
     if (p->vstream >= 0) {
@@ -1564,8 +1840,14 @@ static void close_internal(PCPlayer *p, int keep_out) {
     pcvb_destroy(p->vb);   // after the threads: queued frames are already released
     p->vb = NULL;
     avformat_close_input(&p->fmt);
+    avformat_close_input(&p->old_fmt);
     av_freep(&p->art);
     p->art_size = 0;
+    av_freep(&p->next_path);
+    avcodec_free_context(&p->sw_dec);
+    av_freep(&p->pend_art);
+    p->pend_art_size = 0;
+    atomic_store(&p->pending, 0);
     for (int i = 0; i < p->n_sub; i++) {
         av_freep(&p->subt[i].path);
         avcodec_free_context(&p->subt[i].dec);
@@ -1607,9 +1889,19 @@ void pc_player_seek(PCPlayer *p, double seconds) {
     pc_mutex_lock(&p->lock);
     p->seek_req = 1;
     p->seek_pos = seconds;
-    p->last_pos = seconds;
+    p->last_pos = seconds + p->item_offset;
     pc_mutex_unlock(&p->lock);
 }
+
+void pc_player_set_next(PCPlayer *p, const char *path) {
+    if (!p->is_open) return;
+    pc_mutex_lock(&p->lock);
+    av_freep(&p->next_path);
+    if (path && *path) p->next_path = av_strdup(path);
+    pc_mutex_unlock(&p->lock);
+}
+
+int pc_player_next_pending(PCPlayer *p) { return p->is_open && atomic_load(&p->pending); }
 
 void pc_player_set_upmix(PCPlayer *p, const PCUpmix *u) {
     PCUpmix v = *u;
@@ -1643,7 +1935,7 @@ double pc_player_position(PCPlayer *p) {
     }
     pc_mutex_lock(&p->lock);
     if (!isnan(c)) p->last_pos = c;
-    double r = p->last_pos;
+    double r = p->last_pos - p->item_offset;   // relative to the file being heard
     pc_mutex_unlock(&p->lock);
     if (r < 0) r = 0;
     if (p->info.duration > 0 && r > p->info.duration) r = p->info.duration;
@@ -1653,7 +1945,9 @@ double pc_player_position(PCPlayer *p) {
 void pc_player_set_av_offset(PCPlayer *p, double seconds) { atomic_store(&p->av_offset, seconds); }
 
 void pc_player_get_info(PCPlayer *p, PCInfo *info) {
+    pc_mutex_lock(&p->lock);   // gapless swaps it from the presenter thread
     *info = p->info;
+    pc_mutex_unlock(&p->lock);
     if (p->vstream >= 0 && p->vdec)
         snprintf(info->video + strlen(info->video), sizeof(info->video) - strlen(info->video),
                  " (%s)", p->video_hw ? pcvb_hw_name() : "software");

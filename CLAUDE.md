@@ -298,6 +298,28 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
 - **Open dialogs (Windows):** `FileDialogs.cs` wraps Windows' IFileOpenDialog (files or folders,
   multi-select). WinUI's FolderPicker throws E_FAIL here; FileOpenPicker/FileSavePicker still
   work and are used for Load…/Save… and subtitle files.
+- **Gapless (engine + Windows app, 2026-11-20):** `pc_player_set_next(path)`. At demux EOF
+  `try_gapless` opens the next file and `gapless_ok` checks it would play the same way (mirrors
+  `setup_audio`: audio only, no subtitles, same mode, not passthrough, same transcode channel
+  class and upmix, same exclusive-PCM request `mc_req_*`). The demuxer then reads the new file
+  (old context kept in `old_fmt` until the next switch) and queues a switch marker
+  (`PC_SWITCH_MARK` packet). The audio thread drains the old decoder and swaps in `sw_dec`;
+  swr / upmix graph / encoder FIFO keep running. One continuous timeline: a file's pts =
+  local pts − start + `a_offset`, where the offset is the join (`next_pts` + swr delay, or the
+  upmix graph's input end). The presenter thread's `check_next` fires `PC_EVENT_NEXT` when the
+  output clock reaches the join and swaps in `pend_info`/`pend_art`; `item_offset` makes
+  `pc_player_position` and `pc_player_seek` relative to the file being heard. A seek while
+  `pending` lands in the next file (the app reopens instead). With no next file named yet, EOF
+  is held back while > 1 s of audio is queued, so a slightly late `set_next` still joins (short
+  files are read to the end at once). Tests: regress "Gapless" (bit-identical PCM join, upmixed
+  AC3 without dropout, ineligible file not joined), `pctest play a --then b`. Windows app:
+  `PlayerModel.Gapless.cs` (`UpdateGaplessNext` after open, playlist changes and each switch;
+  next must start at 0 in another, non-video file; `NextStarted` loads the new track's info).
+  Verified in the app with silent files: one open for three tracks, switches exactly 4.0 s apart,
+  AC3 upmix and multichannel PCM upmix.
+- **Upmixed multichannel PCM goes out as 5.1(side) at 48 kHz** (was 5.1(back) at the source
+  rate): a user's HDMI receiver showed only L/R with the old request. Same request as a native
+  5.1 track; the upmix graph's aformat maps the filter's back surrounds onto the sides.
 - **Read-ahead:** `queue_enough` in engine.c: the demuxer reads until each queue holds
   `READ_AHEAD_SECONDS` (10 s; was 2 s, which let USB-drive stalls pause playback) or
   `READ_AHEAD_PACKETS` for duration-less packets, capped at 256 MB in total.
@@ -419,7 +441,7 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
     `pcdump`.
 - **Untested:** DTS-HD sources (no encoder to make test files), and audible playback through
   the amp.
-- **Not implemented:** gapless playback (except between cue tracks of one file),
+- **Not implemented:** gapless playback in the Mac app (the engine has it, see Gapless),
   E-AC3/TrueHD/DTS-HD bitstreaming over HDMI direct to an AVR (the user's chain is optical,
   so AC3/DTS core is the ceiling), and notarization.
 - A clock stall after a seek happened once on the very first bitstream run (when the TV

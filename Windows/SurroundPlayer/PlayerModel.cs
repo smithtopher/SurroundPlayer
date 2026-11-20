@@ -126,6 +126,7 @@ public sealed partial class PlayerModel : Observable
         {
             int gen = Volatile.Read(ref _generation);
             if (ev == Native.PC_EVENT_EOF) _ui.TryEnqueue(() => TrackFinished(gen));
+            else if (ev == Native.PC_EVENT_NEXT) _ui.TryEnqueue(() => NextStarted(gen));
         };
         _deviceCb = ctx => { DebugTrace.Log("device change notification"); _ui.TryEnqueue(RefreshDevices); };
         Native.pc_player_set_callbacks(_player, _videoCb, _eventCb, IntPtr.Zero);
@@ -144,7 +145,7 @@ public sealed partial class PlayerModel : Observable
         _saveTimer.IsRepeating = false;
         _saveTimer.Tick += (_, _) => SaveSession();
         RestoreSession();
-        Playlist.CollectionChanged += (_, _) => ScheduleSave();
+        Playlist.CollectionChanged += (_, _) => { ScheduleSave(); UpdateGaplessNext(); };
     }
 
     // ------------------------------------------------------------------ playlist persistence
@@ -611,6 +612,8 @@ public sealed partial class PlayerModel : Observable
         _openDeviceUid = resolved?.Uid;
         _openDeviceName = resolved?.Name;
         LoadInfo(track);
+        _queuedNext = null;   // a fresh open: the engine has no next file yet
+        UpdateGaplessNext();
         Tick();
     }
 
@@ -661,7 +664,10 @@ public sealed partial class PlayerModel : Observable
         if (!_isOpen || Current == null) return;
         seconds = Math.Max(0, seconds);
         if (Duration > 0) seconds = Math.Min(seconds, Duration);
-        Native.pc_player_seek(_player, Current.Start + seconds);
+        // gapless: while the next file is prepared but not yet heard, the engine is already reading
+        // it, so a seek in the current one reopens it
+        if (Native.pc_player_next_pending(_player) != 0) Play(Current, seconds, !IsPlaying, CurrentAudioTrack);
+        else Native.pc_player_seek(_player, Current.Start + seconds);
         Position = seconds;
     }
 
@@ -778,6 +784,7 @@ public sealed partial class PlayerModel : Observable
 
     private void ClearInfo()
     {
+        _queuedNext = null;
         Title = Artist = Album = SourceAudio = SourceFormat = OutputDescription = VideoDescription = BitstreamCodecName = "";
         OutputMode = -1;
         HasVideo = false;

@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.3.1] — 2026-11-20 (Windows)
+
+### Fixed
+- **Stereo upmix over multichannel PCM played only L/R on an HDMI receiver** (reported on Windows).
+  The upmix asked for 5.1 with *back* surrounds at the source's rate (44.1 kHz for most music);
+  drivers accepted it, but receivers could end up with stereo. It now goes out exactly like a
+  native 5.1 track: **5.1(side) at 48 kHz**, the layout the output details name.
+
+### Added
+- **Gapless playback** between files (Windows): consecutive tracks of an album play with no gap
+  or click. The engine opens the next file while the current one finishes (it reads ahead) and
+  continues into it in the same output stream; the resampler, the upmix filter and the Dolby
+  Digital/DTS encoder keep running across the join. It applies when the next file would play the
+  same way (audio only, same output mode, codec, upmix and multichannel layout; not native
+  Dolby Digital/DTS passthrough); otherwise the next track opens as before.
+
+### Engine
+- `pc_player_set_next` / `pc_player_next_pending` and `PC_EVENT_NEXT`; `pcdump --then <file>`.
+  `regress.sh`: gapless PCM is bit-identical to the unsplit file, no dropout across an upmixed
+  AC3 join, a different output mode isn't joined; upmixed multichannel PCM is 5.1(side) 48 kHz.
+  The Mac app doesn't use gapless yet (without `pc_player_set_next` nothing changes).
+
 ## [1.3.0] — 2026-11-20 (Windows)
 
 ### Windows
