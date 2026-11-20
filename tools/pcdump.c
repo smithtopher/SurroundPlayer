@@ -89,6 +89,8 @@ int main(int argc, char **argv) {
     int play = argc >= 2 && !strcmp(argv[1], "play");
     if (argc < 3) {
         fprintf(stderr, "usage: pcdump <media> <out> [--pcm] [--dts] [--stereo] [--mc-pcm] [--track N]\n"
+                        "         [--upmix] [--upmix-set k=v,...]  (stereo upmix; keys: surround center width lfe\n"
+                        "          xover move bass delay highcut video, see PCUpmix in playercore.h)\n"
                         "       pcdump devices\n"
                         "       pcdump watch [--seconds N]\n"
                         "       pcdump play <media> [--device UID] [--pcm] [--dts] [--stereo] [--mc-pcm] [--track N] [--seconds N] [--debug]\n"
@@ -109,6 +111,9 @@ int main(int argc, char **argv) {
     if (!play) cfg.dump_path = argv[2];
     double seconds = 0;
     int debug = 0, sub_track = -2;
+    // stereo upmix: the apps' "Music" preset unless --upmix-set changes it
+    PCUpmix up = { .enabled = 0, .include_video = 1, .surround_db = -3, .center = 0.5f, .width = 0.5f, .lfe_db = -6,
+                   .crossover_hz = 100, .lfe_move = 0, .bass_db = 0, .rear_delay_ms = 10, .rear_highcut_hz = 7000 };
     const char *sub_file = NULL;
     for (int i = 3; i < argc; i++) {
         if (!strcmp(argv[i], "--pcm")) cfg.bitstream_enabled = 0;
@@ -121,10 +126,34 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--seconds") && i + 1 < argc) seconds = atof(argv[++i]);
         else if (!strcmp(argv[i], "--sub") && i + 1 < argc) sub_track = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--sub-file") && i + 1 < argc) sub_file = argv[++i];
+        else if (!strcmp(argv[i], "--upmix")) up.enabled = 1;
+        else if (!strcmp(argv[i], "--upmix-set") && i + 1 < argc) {
+            up.enabled = 1;
+            char buf[512];
+            snprintf(buf, sizeof(buf), "%s", argv[++i]);
+            for (char *kv = strtok(buf, ","); kv; kv = strtok(NULL, ",")) {
+                char *eq = strchr(kv, '=');
+                if (!eq) continue;
+                *eq = 0;
+                double v = atof(eq + 1);
+                if (!strcmp(kv, "surround")) up.surround_db = (float)v;
+                else if (!strcmp(kv, "center")) up.center = (float)v;
+                else if (!strcmp(kv, "width")) up.width = (float)v;
+                else if (!strcmp(kv, "lfe")) up.lfe_db = (float)v;
+                else if (!strcmp(kv, "xover")) up.crossover_hz = (int)v;
+                else if (!strcmp(kv, "move")) up.lfe_move = (int)v;
+                else if (!strcmp(kv, "bass")) up.bass_db = (float)v;
+                else if (!strcmp(kv, "delay")) up.rear_delay_ms = (float)v;
+                else if (!strcmp(kv, "highcut")) up.rear_highcut_hz = (int)v;
+                else if (!strcmp(kv, "video")) up.include_video = (int)v;
+                else fprintf(stderr, "unknown upmix key %s\n", kv);
+            }
+        }
     }
     int frames = 0;
     PCPlayer *p = pc_player_create();
     pc_player_set_callbacks(p, on_frame, on_event, &frames);
+    pc_player_set_upmix(p, &up);
     char err[512];
     if (pc_player_open(p, media, &cfg, 0, err, sizeof(err)) != 0) { fprintf(stderr, "open failed: %s\n", err); return 2; }
     PCInfo info;

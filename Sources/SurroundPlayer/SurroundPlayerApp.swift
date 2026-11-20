@@ -57,6 +57,8 @@ struct SurroundPlayerApp: App {
                 Button("Load Subtitle File…") { model.showSubtitleOpenPanel() }
                     .disabled(!model.hasVideo)
                 Divider()
+                Button(model.upmix.enabled ? "Turn Off Stereo Upmix  (U)" : "Upmix Stereo to 5.1  (U)") { model.toggleUpmix() }
+                Divider()
                 Button("Stop") { model.stop() }
                     .keyboardShortcut(".", modifiers: .command)
                 Divider()

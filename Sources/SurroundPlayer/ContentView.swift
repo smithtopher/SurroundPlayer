@@ -295,7 +295,7 @@ struct OutputBadge: View {
     var body: some View {
         if model.outputMode >= 0 {
             Button { showDetails.toggle() } label: {
-                Text(model.isBitstreaming ? (model.bitstreamCodecName.isEmpty ? "BITSTREAM" : model.bitstreamCodecName.uppercased()) : model.pcmBadge)
+                Text(model.badgeText)
                     .font(.system(size: 10, weight: .bold, design: .rounded))
                     .padding(.horizontal, 6).padding(.vertical, 3)
                     .foregroundStyle(model.isBitstreaming ? Color.white : Color.primary)

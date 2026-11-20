@@ -31,7 +31,7 @@ fi
 echo "$SHA256  $TARBALL" | sha256sum -c -
 
 # Bump/extend this when the configure options change; it triggers a rebuild.
-OPTIONS="msvc encoders=ac3,dca muxers=spdif hw=d3d11va,dxva2 patches=$(cat patches/ffmpeg/*.patch | sha1sum | cut -c1-12) v1"
+OPTIONS="msvc encoders=ac3,dca muxers=spdif hw=d3d11va,dxva2 filters=abuffer,abuffersink,aformat,aresample,anull,surround,bass,lowpass,adelay,alimiter patches=$(cat patches/ffmpeg/*.patch | sha1sum | cut -c1-12) v2"
 
 PREFIX="$ROOT/$ARCH"
 if [ -f "$PREFIX/lib/libavformat.a" ] && [ "$(cat "$PREFIX/.options" 2>/dev/null)" = "$OPTIONS" ]; then
@@ -47,10 +47,11 @@ cd "$BUILD"
     --prefix="$PREFIX" --toolchain=msvc --arch=x86_64 \
     --enable-static --disable-shared \
     --disable-programs --disable-doc --disable-debug \
-    --disable-avdevice --disable-avfilter --disable-network \
+    --disable-avdevice --disable-network \
     --disable-autodetect --enable-w32threads --enable-d3d11va --enable-dxva2 \
     --disable-encoders --enable-encoder=ac3,dca \
     --disable-muxers --enable-muxer=spdif \
+    --disable-filters --enable-filter=abuffer,abuffersink,aformat,aresample,anull,surround,bass,lowpass,adelay,alimiter \
     --disable-protocols --enable-protocol=file \
     --disable-indevs --disable-outdevs
 make -j"$JOBS"

@@ -12,6 +12,7 @@
 #include "pc_platform.h"
 #include "pc_video_backend.h"
 #include "pc_subtitle.h"
+#include "pc_upmix.h"
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -263,6 +264,17 @@ struct PCPlayer {
     int burst_len, burst_cap;
     double next_pts;
 
+    // stereo upmix. Settings: any thread, under upmix_lock (+ upmix_gen). Graph: audio thread.
+    pc_mutex upmix_lock;
+    PCUpmix upmix;
+    _Atomic int upmix_gen;
+    int upmixing;                    // decided at open: this file's stereo goes through the graph
+    PCUpmixer *um;
+    int um_gen;
+    double um_t0;                    // pts of the first sample fed to the current graph
+    int64_t um_in, um_out;           // samples fed / taken out since um_t0
+    AVFrame *um_frame;
+
     // threads
     pc_thread th_demux, th_audio, th_video, th_present;
     int have_audio_thread, have_video_thread, threads_running;
@@ -313,6 +325,10 @@ PCPlayer *pc_player_create(void) {
     PCPlayer *p = av_mallocz(sizeof(*p));
     pc_mutex_init(&p->lock);
     pc_mutex_init(&p->tap_lock);
+    pc_mutex_init(&p->upmix_lock);
+    p->upmix = (PCUpmix){ .enabled = 0, .include_video = 0, .surround_db = -3, .center = 0.5f, .width = 0.5f,
+                          .lfe_db = -6, .crossover_hz = 100, .lfe_move = 0, .bass_db = 0,
+                          .rear_delay_ms = 10, .rear_highcut_hz = 7000 };
     p->tap = av_calloc(TAP_FRAMES * 2, sizeof(float));
     p->astream = p->vstream = -1;
     p->cur_sub = p->sub_last_track = -1;
@@ -328,6 +344,7 @@ void pc_player_destroy(PCPlayer *p) {
     pc_player_close(p);
     pc_mutex_destroy(&p->lock);
     pc_mutex_destroy(&p->tap_lock);
+    pc_mutex_destroy(&p->upmix_lock);
     av_free(p->tap);
     av_free(p);
 }
@@ -591,6 +608,7 @@ int pc_player_vis_samples(PCPlayer *p, float *lr, int frames) {
 
 static void audio_reset(PCPlayer *p) {
     tap_reset(p);
+    pc_upmix_free(&p->um);      // rebuilt at the next frame (seek: a fresh timeline)
     if (p->adec) avcodec_flush_buffers(p->adec);
     swr_free(&p->swr);
     if (p->fifo) av_audio_fifo_reset(p->fifo);
@@ -611,7 +629,10 @@ static int ensure_swr(PCPlayer *p, const AVFrame *f) {
         return 0;
     }
     swr_free(&p->swr);
-    if (swr_alloc_set_opts2(&p->swr, &p->out_layout, p->out_fmt, p->out_rate,
+    // upmixing: swr makes stereo planar float for the upmix graph, which makes the output format
+    AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+    if (swr_alloc_set_opts2(&p->swr, p->upmixing ? &stereo : &p->out_layout,
+                            p->upmixing ? AV_SAMPLE_FMT_FLTP : p->out_fmt, p->out_rate,
                             &in, f->format, f->sample_rate, 0, NULL) < 0 || swr_init(p->swr) < 0) {
         swr_free(&p->swr);
         av_channel_layout_uninit(&in);
@@ -628,7 +649,8 @@ static int ensure_cvt(PCPlayer *p, int samples) {
     if (samples <= p->cvt_samples) return 0;
     if (p->cvt) { av_freep(&p->cvt[0]); av_freep(&p->cvt); }
     p->cvt_samples = 0;
-    if (av_samples_alloc_array_and_samples(&p->cvt, NULL, p->out_layout.nb_channels, samples, p->out_fmt, 0) < 0)
+    if (av_samples_alloc_array_and_samples(&p->cvt, NULL, p->upmixing ? 2 : p->out_layout.nb_channels, samples,
+                                           p->upmixing ? AV_SAMPLE_FMT_FLTP : p->out_fmt, 0) < 0)
         return -1;
     p->cvt_samples = samples;
     return 0;
@@ -673,6 +695,67 @@ static int deliver(PCPlayer *p, uint8_t **data, int n, int serial) {
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// stereo upmix: stereo fltp from swr -> graph -> deliver(), restamped by the graph latency
+
+static PCUpmix upmix_settings(PCPlayer *p) {
+    pc_mutex_lock(&p->upmix_lock);
+    PCUpmix u = p->upmix;
+    pc_mutex_unlock(&p->upmix_lock);
+    return u;
+}
+
+static int upmix_pull(PCPlayer *p, int serial) {
+    while (p->um && pc_upmix_receive(p->um, p->um_frame) >= 0) {
+        int n = p->um_frame->nb_samples;
+        // output sample k is input sample k - latency
+        p->next_pts = p->um_t0 + (double)(p->um_out - pc_upmix_latency(p->um)) / p->out_rate;
+        p->um_out += n;
+        int r = deliver(p, p->um_frame->extended_data, n, serial);
+        av_frame_unref(p->um_frame);
+        if (r < 0) return -1;
+    }
+    return 0;
+}
+
+// `first_pts`: pts of data's first sample (NAN = continues the previous chunk).
+static int upmix_feed(PCPlayer *p, uint8_t **data, int n, double first_pts, int serial) {
+    double expected = p->um ? p->um_t0 + (double)p->um_in / p->out_rate : NAN;
+    int gen = atomic_load(&p->upmix_gen);
+    if (p->um && gen != p->um_gen) {
+        PCUpmix u = upmix_settings(p);
+        if (pc_upmix_update(p->um, &u) != 0) pc_upmix_free(&p->um);   // crossover: rebuild, same timeline
+        p->um_gen = gen;
+    }
+    if (p->um && !isnan(first_pts) && fabs(expected - first_pts) > 0.3) pc_upmix_free(&p->um);   // discontinuity
+    if (!p->um) {
+        PCUpmix u = upmix_settings(p);
+        char e[256] = "";
+        p->um = pc_upmix_create(&u, p->out_rate, &p->out_layout, p->out_fmt, e, sizeof(e));
+        if (!p->um) return 0;   // checked at open, so only on allocation failure
+        p->um_gen = gen;
+        // a rebuilt graph's priming silence covers exactly what the old one still held
+        p->um_t0 = !isnan(first_pts) ? first_pts : !isnan(expected) ? expected : isnan(p->next_pts) ? 0 : p->next_pts;
+        p->um_in = p->um_out = 0;
+    }
+    if (pc_upmix_send(p->um, (const float *const *)data, n) < 0) return 0;
+    p->um_in += n;
+    return upmix_pull(p, serial);
+}
+
+// End of stream: push the graph's last window out with silence.
+static int upmix_flush(PCPlayer *p, int serial) {
+    if (!p->um) return 0;
+    int n = pc_upmix_flush_samples(p->um);
+    uint8_t **sil = NULL;
+    if (av_samples_alloc_array_and_samples(&sil, NULL, 2, n, AV_SAMPLE_FMT_FLTP, 0) < 0) return 0;
+    av_samples_set_silence(sil, 0, n, 2, AV_SAMPLE_FMT_FLTP);
+    int r = upmix_feed(p, sil, n, NAN, serial);
+    av_freep(&sil[0]);
+    av_freep(&sil);
+    return r;
+}
+
 static int audio_frame(PCPlayer *p, AVFrame *f, int serial) {
     AVStream *st = p->fmt->streams[p->astream];
     double pts = f->best_effort_timestamp != AV_NOPTS_VALUE
@@ -683,6 +766,13 @@ static int audio_frame(PCPlayer *p, AVFrame *f, int serial) {
     tap_feed(p, f, pts);
     if (ensure_swr(p, f) < 0) return 0;
     int64_t delay = swr_get_delay(p->swr, p->out_rate);
+    if (p->upmixing) {
+        int max_up = swr_get_out_samples(p->swr, f->nb_samples);
+        if (max_up <= 0 || ensure_cvt(p, max_up) < 0) return 0;
+        int nu = swr_convert(p->swr, p->cvt, max_up, (const uint8_t **)f->extended_data, f->nb_samples);
+        if (nu <= 0) return 0;
+        return upmix_feed(p, p->cvt, nu, isnan(pts) ? NAN : pts - (double)delay / p->out_rate, serial);
+    }
     if (!isnan(pts)) {
         double expected = p->next_pts + (double)delay / p->out_rate;
         if (isnan(p->next_pts) || fabs(expected - pts) > 0.3) p->next_pts = pts - (double)delay / p->out_rate;
@@ -708,9 +798,11 @@ static void audio_drain(PCPlayer *p, AVFrame *frame, int serial) {
             int max_out = swr_get_out_samples(p->swr, 0);
             if (max_out > 0 && ensure_cvt(p, max_out) == 0) {
                 int n = swr_convert(p->swr, p->cvt, max_out, NULL, 0);
-                if (n > 0 && deliver(p, p->cvt, n, serial) < 0) return;
+                if (n > 0 && (p->upmixing ? upmix_feed(p, p->cvt, n, NAN, serial) : deliver(p, p->cvt, n, serial)) < 0)
+                    return;
             }
         }
+        if (p->upmixing && upmix_flush(p, serial) < 0) return;
         if (p->mode == PC_MODE_TRANSCODE) {
             int left = av_audio_fifo_size(p->fifo);
             if (left > 0) {
@@ -1098,6 +1190,10 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
     int64_t ac3_rate = (int64_t)(cfg->ac3_bitrate_kbps > 0 ? FFMIN(cfg->ac3_bitrate_kbps, 640) : 640) * 1000;
     // DTS nominal 1536/768 kb/s are really 1509.75/754.5 kb/s; both fit a 2048-byte burst
     int64_t dts_rate = cfg->dts_bitrate_kbps > 0 && cfg->dts_bitrate_kbps < 1000 ? 754500 : 1509750;
+    // stereo upmix: mono/stereo sources become 5.1 when the output is surround
+    PCUpmix up = upmix_settings(p);
+    int up_src = up.enabled && src_ch >= 1 && src_ch <= 2 && (up.include_video || p->vstream < 0);
+    p->upmixing = 0;
 
     // Decide: PCM, pass the source's own compressed frames through, or transcode.
     int mode = PC_MODE_PCM;
@@ -1106,10 +1202,10 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
         // DTS core (incl. the core of DTS-HD, the packer strips extensions); not DTS Express (no core)
         int native_dts = dts && par->codec_id == AV_CODEC_ID_DTS && par->sample_rate == 48000 &&
                          par->profile != AV_PROFILE_DTS_EXPRESS;
-        if (cfg->passthrough && (native_ac3 || native_dts)) {
+        if (cfg->passthrough && (native_ac3 || native_dts) && !up_src) {
             mode = PC_MODE_PASSTHROUGH;
             p->bs_codec = par->codec_id;
-        } else if (!cfg->multichannel_pcm && (src_ch > 2 || cfg->stereo_bitstream)) {
+        } else if (!cfg->multichannel_pcm && (src_ch > 2 || cfg->stereo_bitstream || up_src)) {
             mode = PC_MODE_TRANSCODE;
             p->bs_codec = dts ? AV_CODEC_ID_DTS : AV_CODEC_ID_AC3;
         }
@@ -1147,11 +1243,13 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
         }
     }
     PCStreamType pcm_type = PC_STREAM_PCM;
-    if (mode == PC_MODE_PCM && cfg->multichannel_pcm && src_ch > 2) {
+    if (mode == PC_MODE_PCM && cfg->multichannel_pcm && (src_ch > 2 || up_src)) {
         // multichannel PCM, untouched: the source's own layout and rate, exclusive
+        // (an upmixed stereo source: 5.1 at its own rate)
         PCDeviceFormat req = { 0 };
         AVChannelLayout lay = { 0 };
-        if (par->ch_layout.order == AV_CHANNEL_ORDER_NATIVE && src_ch <= 8) av_channel_layout_copy(&lay, &par->ch_layout);
+        if (up_src) av_channel_layout_copy(&lay, &(AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1_BACK);
+        else if (par->ch_layout.order == AV_CHANNEL_ORDER_NATIVE && src_ch <= 8) av_channel_layout_copy(&lay, &par->ch_layout);
         else av_channel_layout_default(&lay, FFMIN(src_ch, 8));
         req.channels = lay.nb_channels;
         req.rate = par->sample_rate > 0 ? par->sample_rate : 48000;
@@ -1187,6 +1285,16 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
         else
             snprintf(p->info.output, sizeof(p->info.output), "PCM %d ch %d Hz -> %s%s", ch, p->out_rate,
                      pc_out_description(p->out), fallback);
+    }
+    // provisional (the descriptions below use it); checked once the output format is final
+    p->upmixing = up_src && (mode == PC_MODE_TRANSCODE || pcm_type == PC_STREAM_PCM_EXCLUSIVE);
+    if (mode == PC_MODE_PCM) {
+        if (pcm_type == PC_STREAM_PCM_EXCLUSIVE && p->upmixing) {
+            char lay[64] = "";
+            av_channel_layout_describe(&p->out_layout, lay, sizeof(lay));
+            snprintf(p->info.output, sizeof(p->info.output), "PCM %s %d Hz (upmixed from %s) -> %s%s", lay, p->out_rate,
+                     src_ch == 1 ? "mono" : "stereo", pc_out_description(p->out), fallback);
+        }
     } else {
         const char *cname = p->bs_codec == AV_CODEC_ID_DTS ? "DTS" : "Dolby Digital";
         snprintf(p->info.bitstream_codec, sizeof(p->info.bitstream_codec), "%s", cname);
@@ -1194,8 +1302,10 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
         if (mode == PC_MODE_PASSTHROUGH) {
             av_channel_layout_copy(&enc_layout, &par->ch_layout);
         } else {
-            enc_layout = src_ch > 2 ? (AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1 : (AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO;
-            if (src_ch <= 2 && p->bs_codec == AV_CODEC_ID_AC3) rate = FFMIN(rate, 320000);
+            // upmixed stereo: 5.1 with back surrounds, the layout the upmix graph makes
+            enc_layout = up_src ? (AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1_BACK
+                       : src_ch > 2 ? (AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1 : (AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO;
+            if (src_ch <= 2 && !up_src && p->bs_codec == AV_CODEC_ID_AC3) rate = FFMIN(rate, 320000);
             p->aenc = open_bs_encoder(p->bs_codec, &enc_layout, rate);
             if (!p->aenc && p->bs_codec == AV_CODEC_ID_AC3) {
                 enc_layout = (AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1_BACK;
@@ -1219,9 +1329,25 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
                      lay, (long long)(par->bit_rate / 1000), p->bs_codec == AV_CODEC_ID_DTS && par->codec_id == AV_CODEC_ID_DTS &&
                      par->profile != AV_PROFILE_DTS ? " (core)" : "", pc_out_description(p->out));
         else
-            snprintf(p->info.output, sizeof(p->info.output), "%s %s %lld kb/s (transcoded), IEC 61937 -> %s", cname,
-                     lay, (long long)(p->aenc->bit_rate / 1000), pc_out_description(p->out));
+            snprintf(p->info.output, sizeof(p->info.output), "%s %s %lld kb/s (%s), IEC 61937 -> %s%s", cname,
+                     lay, (long long)(p->aenc->bit_rate / 1000),
+                     p->upmixing ? (src_ch == 1 ? "upmixed from mono, transcoded" : "upmixed from stereo, transcoded")
+                                 : "transcoded", pc_out_description(p->out), fallback);
         av_channel_layout_uninit(&enc_layout);
+    }
+    if (p->upmixing) {
+        // check now that the graph builds for this output, so playback never goes silent later;
+        // without it the output still works (swr places stereo in the front pair)
+        char e[256] = "";
+        PCUpmixer *test = pc_upmix_create(&up, p->out_rate, &p->out_layout, p->out_fmt, e, sizeof(e));
+        if (test) {
+            pc_upmix_free(&test);
+            p->um_frame = av_frame_alloc();
+        } else {
+            p->upmixing = 0;
+            size_t l = strlen(p->info.output);
+            snprintf(p->info.output + l, sizeof(p->info.output) - l, " [upmix unavailable: %s]", e);
+        }
     }
     p->info.mode = mode;
     describe_audio_stream(st, p->info.source_audio, sizeof(p->info.source_audio));
@@ -1413,6 +1539,9 @@ static void close_internal(PCPlayer *p, int keep_out) {
     avcodec_free_context(&p->adec);
     avcodec_free_context(&p->vdec);
     avcodec_free_context(&p->aenc);
+    pc_upmix_free(&p->um);
+    av_frame_free(&p->um_frame);
+    p->upmixing = 0;
     swr_free(&p->swr);
     swr_free(&p->tap_swr);
     av_channel_layout_uninit(&p->tap_in_layout);
@@ -1481,6 +1610,17 @@ void pc_player_seek(PCPlayer *p, double seconds) {
     p->last_pos = seconds;
     pc_mutex_unlock(&p->lock);
 }
+
+void pc_player_set_upmix(PCPlayer *p, const PCUpmix *u) {
+    PCUpmix v = *u;
+    pc_upmix_sanitize(&v);
+    pc_mutex_lock(&p->upmix_lock);
+    p->upmix = v;
+    pc_mutex_unlock(&p->upmix_lock);
+    atomic_fetch_add(&p->upmix_gen, 1);
+}
+
+int pc_player_upmix_active(PCPlayer *p) { return p->is_open && p->upmixing; }
 
 int pc_player_output_lost(PCPlayer *p) {
     return p->is_open && p->out && pc_out_lost(p->out);

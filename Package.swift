@@ -28,7 +28,7 @@ let package = Package(
             ],
             linkerSettings: [
                 .unsafeFlags(["-L\(ffmpegPrefix)/lib"]),
-                .linkedLibrary("avformat"), .linkedLibrary("avcodec"), .linkedLibrary("avutil"),
+                .linkedLibrary("avfilter"), .linkedLibrary("avformat"), .linkedLibrary("avcodec"), .linkedLibrary("avutil"),
                 .linkedLibrary("swresample"), .linkedLibrary("swscale"),
                 // needed by a static FFmpeg
                 .linkedLibrary("z"), .linkedLibrary("bz2"),

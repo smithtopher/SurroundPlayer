@@ -11,7 +11,7 @@ OUT=.build/portable
 mkdir -p "$OUT"
 CFLAGS=(-std=c11 -O2 -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare -DPC_STUB_BACKENDS
         -ISources/PlayerCore -ISources/PlayerCore/include -I"$FF/include")
-SRCS=(Sources/PlayerCore/engine.c Sources/PlayerCore/pc_output.c Sources/PlayerCore/pc_subtitle.c
+SRCS=(Sources/PlayerCore/engine.c Sources/PlayerCore/pc_output.c Sources/PlayerCore/pc_subtitle.c Sources/PlayerCore/pc_upmix.c
       Sources/PlayerCore/platform/stub/audio_stub.c Sources/PlayerCore/platform/stub/video_stub.c
       Sources/PlayerCore/platform/apple/audio_coreaudio.c Sources/PlayerCore/platform/apple/video_apple.c)
 OBJS=()
@@ -31,7 +31,7 @@ echo "core + stub back-ends: no framework headers, no OS media symbols"
 
 # link a plain C driver (FFmpeg itself was built with VideoToolbox on macOS, so its
 # own dependencies still need the frameworks at link time)
-FFLIBS=(-L"$FF/lib" -lavformat -lavcodec -lswresample -lswscale -lavutil -lz -lbz2)
+FFLIBS=(-L"$FF/lib" -lavfilter -lavformat -lavcodec -lswresample -lswscale -lavutil -lz -lbz2)
 [ "$(uname)" = Darwin ] && FFLIBS+=(-framework VideoToolbox -framework CoreMedia -framework CoreVideo
                                    -framework CoreFoundation -framework CoreServices)
 clang "${CFLAGS[@]}" tools/pcdump.c "${OBJS[@]}" "${FFLIBS[@]}" -lpthread -o "$OUT/pcdump"

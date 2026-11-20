@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.3.0] — 2026-11-20 (macOS)
+
+### Added
+- **Stereo upmix to 5.1:** stereo (and mono) sources become real 5.1 before they're sent as
+  Dolby Digital, DTS or multichannel PCM. It uses FFmpeg's `surround` filter: centred sound goes
+  to the front and centre, ambience to the rears.
+  - **Settings ▸ Stereo Upmix:** Off / Music / Movies & TV / Wide / Custom.
+  - **Main controls:** surround level, centre (dialogue) focus, front width and subwoofer level.
+  - **Advanced:** bass crossover, copy or move bass to the subwoofer, bass boost, rear delay and
+    rear high-cut.
+  - Optionally also for videos with stereo sound.
+  - Changes apply while playing (except the crossover, which causes a short dropout). **U**
+    toggles it, and the badge shows "· UPMIX".
+  - Lip sync is kept: the filter's 43 ms latency is compensated.
+  - Verified with silent media on the Samsung TV over HDMI, as Dolby Digital 5.1 and as 6-channel
+    PCM.
+
+### Engine
+- `pc_player_set_upmix` / `pc_player_upmix_active`. FFmpeg is now built with libavfilter, with
+  only the filters the upmix needs. `pcdump --upmix`, and `regress.sh` checks the upmix.
+- Windows: the build files are updated (FFmpeg rebuild, `pc_upmix.c`, linking libavfilter) but
+  not yet built there, and there's no UI yet.
+
 ## [1.2.9] — 2026-11-19 (Windows)
 
 ### Windows

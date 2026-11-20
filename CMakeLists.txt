@@ -25,7 +25,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # static FFmpeg libraries plus the system libraries they need (from their .pc Libs.private)
 add_library(ffmpeg INTERFACE)
 target_include_directories(ffmpeg INTERFACE "${FFMPEG_PREFIX}/include")
-foreach(lib avformat avcodec swresample swscale avutil)
+foreach(lib avfilter avformat avcodec swresample swscale avutil)
     find_library(FF_${lib} NAMES lib${lib}.a ${lib} PATHS "${FFMPEG_PREFIX}/lib" NO_DEFAULT_PATH REQUIRED)
     target_link_libraries(ffmpeg INTERFACE "${FF_${lib}}")
 endforeach()
@@ -42,6 +42,7 @@ add_library(playercore_stub STATIC
     "${PC_DIR}/engine.c"
     "${PC_DIR}/pc_output.c"
     "${PC_DIR}/pc_subtitle.c"
+    "${PC_DIR}/pc_upmix.c"
     "${PC_DIR}/platform/stub/audio_stub.c"
     "${PC_DIR}/platform/stub/video_stub.c")
 target_include_directories(playercore_stub PUBLIC "${PC_DIR}" "${PC_DIR}/include")
@@ -58,6 +59,7 @@ add_library(playercore_win STATIC
     "${PC_DIR}/engine.c"
     "${PC_DIR}/pc_output.c"
     "${PC_DIR}/pc_subtitle.c"
+    "${PC_DIR}/pc_upmix.c"
     "${PC_DIR}/platform/windows/audio_wasapi.c"
     "${PC_DIR}/platform/windows/video_d3d11.c")
 target_include_directories(playercore_win PUBLIC "${PC_DIR}" "${PC_DIR}/include")
@@ -70,6 +72,7 @@ add_library(playercore SHARED
     "${PC_DIR}/engine.c"
     "${PC_DIR}/pc_output.c"
     "${PC_DIR}/pc_subtitle.c"
+    "${PC_DIR}/pc_upmix.c"
     "${PC_DIR}/platform/windows/audio_wasapi.c"
     "${PC_DIR}/platform/windows/video_d3d11.c")
 target_include_directories(playercore PRIVATE "${PC_DIR}" "${PC_DIR}/include")

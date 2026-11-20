@@ -108,5 +108,72 @@ run "$W/tracks.mkv" "$W/o10.raw" --track 1 --mc-pcm && {
         && pass "track 1 selected: $(grep '^source:' "$W/log.txt")" || fail "track selection: $(head -3 "$W/log.txt")"
 }
 
+echo "Stereo upmix (stereo -> 5.1, FFmpeg surround filter)"
+# per-channel levels of a 6-channel f32le dump (FL FR FC LFE BL BR), seconds 2..4; then a check
+cat > "$W/upmix.py" <<'EOF2'
+import sys, math
+from array import array
+a = array('f'); a.frombytes(open(sys.argv[1], 'rb').read()); ch = 6; rate = 48000
+seg = a[2 * rate * ch: 4 * rate * ch]
+db = []
+for c in range(ch):
+    x = seg[c::ch]; e = math.fsum(v * v for v in x) / max(1, len(x))
+    db.append(10 * math.log10(e) if e > 1e-15 else -150.0)
+FL, FR, FC, LFE, BL, BR = db
+rule = sys.argv[2]
+ok = {
+    'left':      FL > max(FR, FC, BL, BR) + 20,                  # hard left stays front left
+    'centre':    FC > FL - 6 and max(BL, BR) < FL - 30,          # centred -> centre (+ fronts), not rears
+    'antiphase': min(BL, BR) > max(FL, FR, FC) + 6,              # out-of-phase ambience -> rears
+    'norears':   max(BL, BR) < FL - 40,                          # surround=-40
+    'nocentre':  FC < FL - 40,                                   # center=0: phantom centre
+    'lfe':       LFE > FL - 20,                                  # bass reaches the sub
+    'nolfe':     LFE < FL - 60,                                  # lfe=-40
+    'mono':      FC > FL - 6,                                    # mono -> centre
+}[rule]
+print(('ok ' if ok else 'BAD ') + ' '.join('%s %.1f' % (n, v) for n, v in zip(['FL', 'FR', 'FC', 'LFE', 'BL', 'BR'], db)))
+EOF2
+up_check() { # name dump rule
+    local r; r=$("$PY" -I "$W/upmix.py" "$2" "$3")
+    case "$r" in ok*) pass "$1: ${r#ok }";; *) fail "$1: ${r#BAD }";; esac
+}
+ff -f lavfi -i "aevalsrc=0.25*sin(2*PI*1000*t)|0:s=48000:d=6" -t 6 -c:a flac "$W/up_left.flac"
+ff -f lavfi -i "aevalsrc=0.25*sin(2*PI*1000*t)|0.25*sin(2*PI*1000*t):s=48000:d=6" -t 6 -c:a flac "$W/up_centre.flac"
+ff -f lavfi -i "aevalsrc=0.25*sin(2*PI*1000*t)|-0.25*sin(2*PI*1000*t):s=48000:d=6" -t 6 -c:a flac "$W/up_anti.flac"
+ff -f lavfi -i "aevalsrc=0.25*sin(2*PI*50*t)|0.25*sin(2*PI*50*t):s=48000:d=6" -t 6 -c:a flac "$W/up_bass.flac"
+ff -f lavfi -i "aevalsrc=0.25*sin(2*PI*1000*t):s=48000:d=6" -t 6 -c:a flac "$W/up_mono.flac"
+ff -f lavfi -i "aevalsrc='if(eq(n,48000),0.5,0)|if(eq(n,48000),0.5,0)':s=48000:d=3" -t 3 -c:a flac "$W/up_imp.flac"
+run "$W/up_left.flac" "$W/u1.raw" --mc-pcm --upmix && up_check "upmix hard left" "$W/u1.raw" left
+run "$W/up_centre.flac" "$W/u2.raw" --mc-pcm --upmix && {
+    up_check "upmix centred" "$W/u2.raw" centre
+    grep -q "upmixed from stereo" "$W/log.txt" && pass "upmix: output says 'upmixed from stereo'" || fail "upmix: $(grep '^output' "$W/log.txt")"
+}
+run "$W/up_anti.flac" "$W/u3.raw" --mc-pcm --upmix && up_check "upmix ambience" "$W/u3.raw" antiphase
+run "$W/up_anti.flac" "$W/u4.raw" --mc-pcm --upmix-set surround=-40 && up_check "upmix surround=-40" "$W/u4.raw" norears
+run "$W/up_centre.flac" "$W/u5.raw" --mc-pcm --upmix-set center=0 && up_check "upmix center=0" "$W/u5.raw" nocentre
+run "$W/up_bass.flac" "$W/u6.raw" --mc-pcm --upmix-set lfe=0 && up_check "upmix lfe=0 dB" "$W/u6.raw" lfe
+run "$W/up_bass.flac" "$W/u7.raw" --mc-pcm --upmix-set lfe=-40 && up_check "upmix lfe=-40" "$W/u7.raw" nolfe
+run "$W/up_mono.flac" "$W/u8.raw" --mc-pcm --upmix && {
+    up_check "upmix mono" "$W/u8.raw" mono
+    grep -q "upmixed from mono" "$W/log.txt" && pass "upmix: mono source described" || fail "upmix mono: $(grep '^output' "$W/log.txt")"
+}
+# latency: the dump starts with the graph's priming, stamped 2048 samples early, so the impulse
+# at 1.000 s must sit at index 48000 + 2048 (any other offset would put video out of sync)
+run "$W/up_imp.flac" "$W/u9.raw" --mc-pcm --upmix && {
+    k=$("$PY" -I -c "
+import sys
+from array import array
+a = array('f'); a.frombytes(open(sys.argv[1], 'rb').read()); n = len(a) // 6
+print(max(range(n), key=lambda i: abs(a[i * 6 + 2])))" "$W/u9.raw")
+    [ "$k" = 50048 ] && pass "upmix latency: impulse at 48000+2048 (compensated in the timestamps)" || fail "upmix latency: impulse at $k, want 50048"
+}
+run "$W/up_centre.flac" "$W/u10.spdif" --upmix && {
+    check_stream "upmix ac3" "$W/u10.spdif" "ac3" "5.1" 6144
+    grep -q "upmixed from stereo, transcoded" "$W/log.txt" && pass "upmix ac3: transcoded from stereo" || fail "upmix ac3: $(grep '^output' "$W/log.txt")"
+}
+run "$W/up_centre.flac" "$W/u11.raw" && {
+    grep -q "^output: PCM 2 ch" "$W/log.txt" && pass "upmix off: stereo stays stereo PCM" || fail "upmix off: $(grep '^output' "$W/log.txt")"
+}
+
 [ $FAIL = 0 ] && echo "ALL PASSED" || echo "SOME CHECKS FAILED"
 exit $FAIL

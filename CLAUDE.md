@@ -264,6 +264,28 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
   Tested in the app (`SURROUND_DEBUG` prints the subtitle state): default-flagged SubRip timing,
   PGS bitmaps on an HD and an anamorphic canvas, a Windows-1252 `movie.de.srt` sidecar picked
   by the remembered language. Not checked by eye (no screenshots), DVD/DVB untested.
+- **Stereo upmix (engine + Mac app 1.3.0, 2026-11-20):** `pc_upmix.c` (portable) builds a
+  libavfilter graph: `bass` (boost) → `surround` (FFT ambience extraction, chl_out **"5.1" = back
+  surrounds** in FFmpeg naming; with 5.1(side) out-of-phase ambience goes nowhere) → `adelay`
+  (rears) → `lowpass` (rears) → `alimiter` (latency=1) → `aformat`. API `pc_player_set_upmix` /
+  `pc_player_upmix_active` (not a PCConfig field, so the C# mirror of PCConfig is unchanged).
+  Applies to 1–2 ch sources when the output is a bitstream transcode or exclusive multichannel PCM
+  (stereo passthrough is skipped). Timing: output sample k = input k − 2048 (half the 4096 window,
+  measured with an impulse); `upmix_pull` restamps `t0 + (out − 2048)/rate`, a rebuilt graph's
+  priming covers exactly what the old one held, and `upmix_flush` pushes a window of silence at
+  EOF. Runtime filter commands for everything except the crossover (rebuild, ~40 ms dropout).
+  level_out +2 dB make-up (the filter alone is −1.3..−3 dB). Settings map (see the comment at the
+  top of pc_upmix.c): surround → bl/br_out, centre → fc_out + flx/frx, width → angle 45..135.
+  Tests: `regress.sh` "Stereo upmix" (channel placement, every slider's effect, mono, latency
+  index 50048, AC3 5.1 bursts, off = stereo PCM); `pcdump --upmix` / `--upmix-set k=v,...`.
+  **Live on the Samsung (silent media):** AC3 5.1 upmixed over HDMI, and multichannel PCM 6 ch
+  24-bit 44.1 kHz exclusive with the TV's channel order L R LFE C Ls Rs (the CoreAudio remap path).
+  Mac UI: Settings > Stereo Upmix (mode Off/Music/Movies & TV/Wide/Custom; sliders surround,
+  centre focus, width, LFE; Advanced: crossover, copy/move bass, bass boost, rear delay, rear
+  high-cut), U key, Playback menu, badge " · UPMIX". `Upmix.swift` holds presets and keys.
+  **Windows: not ported yet.** The engine change needs FFmpeg rebuilt with avfilter
+  (`build_ffmpeg_win.sh` stamp v2 forces it) and CMake now links avfilter + pc_upmix.c: both
+  edited on the Mac, **unbuilt on Windows**. Then port the UI with the same `upmix*` keys.
 - **Source format:** `PCInfo.source_rate` / `source_bits` (`audio_stream_bits`:
   `bits_per_raw_sample`, else the sample size of lossless/PCM codecs, else 0 = lossy). The
   source description ends ", 24-bit". Windows shows "24-bit / 96 kHz" beside the output badge
@@ -324,15 +346,28 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
     `ac3Bitrate`, `dtsBitrate`, `ac3Passthrough`, `stereoAsAC3`, `multichannelPcm`.
     Both apps show these as one "Surround output" choice: DD / DTS / Multichannel PCM / Off
     (Mac: `PlayerModel.surroundOutput`, which sets them together with a single reopen).
+  - Upmix: `upmixMode` (0 off, 1 music, 2 movies, 3 wide, 4 custom), `upmixVideo`, `upmixSurroundDb`,
+    `upmixCenter`, `upmixWidth`, `upmixLfeDb`, `upmixCrossoverHz`, `upmixLfeMove`, `upmixBassDb`,
+    `upmixRearDelayMs`, `upmixRearHighcutHz`, `upmixLastMode` (what U turns back on).
   - Other: `avOffsetMs`, `visualizerEnabled`, `subtitleLanguage` ("" = the file's default
     track, "off", "*", or a 2-letter code; set when the user picks a track).
   - `recentFiles`: File > Open Recent, newest first, at most 10 paths. It records what the user
     opened (files, folders or cue sheets, via Open…, drops, Finder), in `PlayerModel.add`
     (Windows: `PlayerModel.Add`, the toolbar's history button). Auto-advance doesn't add to it.
 - **Version:** `CFBundleShortVersionString` in `Resources/Info.plist`, shown in Settings. Kept
-  in step with the Windows `<Version>` (1.2.7 = same features on both).
+  in step with the Windows `<Version>` (1.2.7 = same features on both; Mac 1.3.0 adds the
+  stereo upmix, Windows 1.3.0 once its UI is ported).
 
 ## Testing — IMPORTANT
+- **Never touch the user's real app data.** `~/Library/Application Support/SurroundPlayer/playlist.json`
+  (saved playlist; the SwiftPM debug binary uses it too) and the `local.surroundplayer` defaults
+  domain hold the user's playlist, recents and settings. On 2026-11-20 a test cleanup deleted the
+  user's 5,683-item playlist and their recents. Before any app run, back them up (`cp`,
+  `defaults export local.surroundplayer`) and restore them afterwards; never `rm` or
+  `defaults delete` them. A log line "restored N playlist items" you didn't create means stop.
+- **zsh:** the Bash tool's shell is zsh, where `"$1:s..."` is a substitution modifier. Write
+  `${1}`. (`aevalsrc=$1:s=48000:d=6` lost its duration and wrote a 24 GB file.) Cap generated
+  media with `-t`, and use `ffmpeg -nostdin`.
 - **Never play audible test signals.** The TV is often the default output, and a test once
   played a 440 Hz tone through it. Use **silent media** (`anullsrc`) for anything that hits a
   real device. Tones are fine with `pctest dump` (it writes to a file, nothing plays).

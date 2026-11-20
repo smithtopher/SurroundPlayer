@@ -23,7 +23,7 @@ fi
 echo "$SHA256  $TARBALL" | shasum -a 256 -c -
 
 # Bump/extend this when the configure options change; it triggers a rebuild.
-OPTIONS="encoders=ac3,dca muxers=spdif patches=$(cat patches/ffmpeg/*.patch | shasum | cut -c1-12) v2"
+OPTIONS="encoders=ac3,dca muxers=spdif filters=abuffer,abuffersink,aformat,aresample,anull,surround,bass,lowpass,adelay,alimiter patches=$(cat patches/ffmpeg/*.patch | shasum | cut -c1-12) v3"
 
 for ARCH in $ARCHS; do
     PREFIX="$ROOT/$ARCH"
@@ -49,10 +49,11 @@ for ARCH in $ARCHS; do
         --extra-cflags="-mmacosx-version-min=$MIN_MACOS" --extra-ldflags="-mmacosx-version-min=$MIN_MACOS" \
         --enable-static --disable-shared --enable-pic \
         --disable-programs --disable-doc --disable-debug \
-        --disable-avdevice --disable-avfilter --disable-network \
+        --disable-avdevice --disable-network \
         --disable-autodetect --enable-videotoolbox --enable-zlib --enable-bzlib \
         --disable-encoders --enable-encoder=ac3,dca \
         --disable-muxers --enable-muxer=spdif \
+        --disable-filters --enable-filter=abuffer,abuffersink,aformat,aresample,anull,surround,bass,lowpass,adelay,alimiter \
         --disable-protocols --enable-protocol=file \
         --disable-indevs --disable-outdevs
     make -j"$JOBS"

@@ -130,6 +130,13 @@ final class PlayerModel: ObservableObject {
         }
     }
     private var batchingSettings = false
+
+    /// Stereo upmix (Upmix.swift). Sliders apply live; on/off reopens the open file.
+    @Published var upmix = UpmixSettings.load(.standard) {
+        didSet { if upmix != oldValue { upmixChanged(from: oldValue) } }
+    }
+    /// The open file is being upmixed right now (stereo source, surround output, upmix on).
+    @Published var upmixActive = false
     /// "" follow the file's default track, "off", "*" any, else a 2-letter language code.
     var subtitleLanguage: String = defaults.string(forKey: "subtitleLanguage") ?? "" {
         didSet { Self.defaults.set(subtitleLanguage, forKey: "subtitleLanguage") }
@@ -264,6 +271,7 @@ final class PlayerModel: ObservableObject {
         case "l": visLocked.toggle()
         case "a": cycleAudioTrack()
         case "s": cycleSubtitleTrack()
+        case "u": toggleUpmix()
         default: return false
         }
         return true
@@ -295,6 +303,8 @@ final class PlayerModel: ObservableObject {
                 DispatchQueue.main.async { bridge.model?.trackFinished(generation: gen) }
             }
         }, ctx)
+        var up = upmix.engine
+        pc_player_set_upmix(player, &up)
         refreshDevices()
         watchDevices()
         syncVideoSink()
@@ -690,6 +700,12 @@ final class PlayerModel: ObservableObject {
         return s
     }
 
+    /// The output badge: "DOLBY DIGITAL", "DTS", "PCM", "PCM 5.1", plus " · UPMIX" while upmixing.
+    var badgeText: String {
+        let base = isBitstreaming ? (bitstreamCodecName.isEmpty ? "BITSTREAM" : bitstreamCodecName.uppercased()) : pcmBadge
+        return upmixActive ? base + " · UPMIX" : base
+    }
+
     /// Badge text when not bitstreaming: "PCM", or "PCM 5.1" for untranscoded multichannel.
     var pcmBadge: String {
         guard outputDescription.contains("multichannel") else { return "PCM" }
@@ -698,6 +714,8 @@ final class PlayerModel: ObservableObject {
     }
 
     /// Output settings changed: reopen the current item at the same position.
+    func reopenForSettings() { settingsChanged() }
+
     private func settingsChanged() {
         guard !batchingSettings, isOpen, let i = currentIndex else { return }
         play(index: i, start: position, paused: !isPlaying, audioTrack: currentAudioTrack)
@@ -737,7 +755,7 @@ final class PlayerModel: ObservableObject {
         if Self.debug {
             debugTicks += 1
             if debugTicks % 5 == 0 {
-                FileHandle.standardError.write("[app] items=\(playlist.count) \(title) pos=\(String(format: "%.2f", position))/\(String(format: "%.1f", duration)) playing=\(isPlaying) mode=\(outputMode) | \(outputDescription) | video: \(videoDescription) | src=\(sourceFormat) art=\(artwork != nil) sub=\(currentSubtitleTrack)/\(subtitleTracks.count) \(subtitleDebug) fullscreen=\(isFullScreen) \(showsVisualizer ? visualizer!.debugStatus : "vis off")\n".data(using: .utf8)!)
+                FileHandle.standardError.write("[app] items=\(playlist.count) \(title) pos=\(String(format: "%.2f", position))/\(String(format: "%.1f", duration)) playing=\(isPlaying) mode=\(outputMode) | \(outputDescription) | video: \(videoDescription) | src=\(sourceFormat) upmix=\(upmixActive) art=\(artwork != nil) sub=\(currentSubtitleTrack)/\(subtitleTracks.count) \(subtitleDebug) fullscreen=\(isFullScreen) \(showsVisualizer ? visualizer!.debugStatus : "vis off")\n".data(using: .utf8)!)
             }
         }
     }
@@ -753,7 +771,7 @@ final class PlayerModel: ObservableObject {
 
     private func clearInfo() {
         title = ""; artist = ""; album = ""; sourceAudio = ""; sourceFormat = ""; outputDescription = ""; videoDescription = ""
-        subtitleTracks = []; currentSubtitleTrack = -1; videoWidth = 0; videoHeight = 0
+        subtitleTracks = []; currentSubtitleTrack = -1; videoWidth = 0; videoHeight = 0; upmixActive = false
         outputMode = -1; bitstreamCodecName = ""; hasVideo = false; artwork = nil; audioTracks = []; currentAudioTrack = -1; duration = 0
     }
 
@@ -771,6 +789,7 @@ final class PlayerModel: ObservableObject {
         videoDescription = cString(info.video)
         outputMode = info.mode
         bitstreamCodecName = cString(info.bitstream_codec)
+        upmixActive = pc_player_upmix_active(player) != 0
         hasVideo = info.has_video != 0
         fileDuration = info.duration
         applyTrackInfo(track)
