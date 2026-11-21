@@ -34,6 +34,7 @@ public sealed class Settings
     public double upmixBassDb { get; set; } = 0;
     public double upmixRearDelayMs { get; set; } = 10;
     public int upmixRearHighcutHz { get; set; } = 7000;  // 0 = off
+    public UpmixValues? upmixCustom { get; set; }        // the Custom profile, kept while a preset is chosen
     public string subtitleLanguage { get; set; } = "";       // subtitles: "" follow the file's default track, "off", "*" any, else a 2-letter code (Windows only)
     // Windows only: last window size in DIPs (0 = default 1280x800)
     public double windowWidth { get; set; }

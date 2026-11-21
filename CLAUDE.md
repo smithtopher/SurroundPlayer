@@ -287,7 +287,11 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
   pc_upmix.c. `PlayerModel.Upmix.cs` (presets, same `upmix*` keys and defaults in settings.json,
   `PushUpmix` before every open and on every change; on/off and include-video reopen), Settings
   dialog "Stereo Upmix" (mode, blurb, include video, four sliders, Advanced expander), U key,
-  badge " · UPMIX" from `pc_player_upmix_active`.
+  badge " · UPMIX" from `pc_player_upmix_active`. Mode switching lives in `UpmixProfiles.cs`
+  (pure, testable): Custom is a saved profile (`upmixCustom` in settings.json, saved when
+  leaving Custom, restored when choosing it again; sliders moved on a preset become Custom).
+  A user lost their Custom values comparing against Music before this. **The Mac app still
+  has that bug** (`UpmixSettings.apply` only knows presets): port the profile there too.
 - **Source format:** `PCInfo.source_rate` / `source_bits` (`audio_stream_bits`:
   `bits_per_raw_sample`, else the sample size of lossless/PCM codecs, else 0 = lossy). The
   source description ends ", 24-bit". Windows shows "24-bit / 96 kHz" beside the output badge

@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.3] — 2026-11-21 (Windows)
+
+### Fixed
+- **Stereo upmix: switching from Custom to a preset (to compare) and back lost the custom
+  settings** (Windows). Custom is now a saved profile: leaving it (for a preset, Off or the U key)
+  keeps its values, and choosing Custom again brings them back. It's kept in settings.json
+  (`upmixCustom`), so it also survives a restart.
+
+### Includes 1.3.2
+- The Windows build also has 1.3.2's shared engine fix (stereo upmix with DTS output); there
+  was no separate Windows 1.3.2 build.
+
 ## [1.3.2] — 2026-11-21 (macOS and Windows)
 
 ### Fixed

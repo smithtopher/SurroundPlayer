@@ -5,8 +5,6 @@ using System;
 
 namespace SurroundPlayer;
 
-public enum UpmixMode { Off = 0, Music, Movies, Wide, Custom }
-
 public sealed partial class PlayerModel
 {
     public static readonly string[] UpmixModeTitles = { "Off", "Music", "Movies & TV", "Wide", "Custom" };
@@ -33,8 +31,7 @@ public sealed partial class PlayerModel
         {
             if (value == UpmixMode) return;
             bool wasOn = UpmixMode != UpmixMode.Off;
-            _settings.upmixMode = (int)value;
-            ApplyUpmixPreset(value);   // a preset sets the sliders
+            UpmixProfiles.SetMode(_settings, value);   // presets set the sliders; Custom keeps its own
             UpmixChanged(reopen: wasOn != (value != UpmixMode.Off));
         }
     }
@@ -60,23 +57,8 @@ public sealed partial class PlayerModel
     {
         if (!changed) return;
         assign();
-        if (UpmixMode is not (UpmixMode.Off or UpmixMode.Custom)) _settings.upmixMode = (int)UpmixMode.Custom;
+        UpmixProfiles.ValueChanged(_settings);   // a preset becomes Custom; Custom remembers the values
         UpmixChanged(reopen: false);
-    }
-
-    private void ApplyUpmixPreset(UpmixMode m)
-    {
-        (double s, double c, double w, double l, int x, bool mv, double b, double d, int h) p = m switch
-        {
-            UpmixMode.Music => (-3, 0.4, 0.55, -6, 100, false, 0, 10, 7000),
-            UpmixMode.Movies => (-4, 0.9, 0.5, -3, 120, false, 0, 15, 7000),
-            UpmixMode.Wide => (0, 0.5, 0.8, -3, 100, false, 3, 5, 12000),
-            _ => (_settings.upmixSurroundDb, _settings.upmixCenter, _settings.upmixWidth, _settings.upmixLfeDb,
-                  _settings.upmixCrossoverHz, _settings.upmixLfeMove, _settings.upmixBassDb, _settings.upmixRearDelayMs,
-                  _settings.upmixRearHighcutHz),
-        };
-        (_settings.upmixSurroundDb, _settings.upmixCenter, _settings.upmixWidth, _settings.upmixLfeDb, _settings.upmixCrossoverHz,
-         _settings.upmixLfeMove, _settings.upmixBassDb, _settings.upmixRearDelayMs, _settings.upmixRearHighcutHz) = p;
     }
 
     private void UpmixChanged(bool reopen)
@@ -117,15 +99,13 @@ public sealed partial class PlayerModel
         if (UpmixMode != UpmixMode.Off)
         {
             _settings.upmixLastMode = (int)UpmixMode;
-            UpmixMode = UpmixMode.Off;
+            UpmixMode = UpmixMode.Off;   // leaving Custom saves its values
         }
         else
         {
-            // back on in the last mode, keeping the sliders as they were (no preset reset)
+            // back on in the last mode (Custom comes back with its saved values)
             var last = (UpmixMode)Math.Clamp(_settings.upmixLastMode, 0, 4);
-            _settings.upmixMode = (int)(last == UpmixMode.Off ? UpmixMode.Music : last);
-            if (last == UpmixMode.Off) ApplyUpmixPreset(UpmixMode.Music);
-            UpmixChanged(reopen: true);
+            UpmixMode = last == UpmixMode.Off ? UpmixMode.Music : last;
         }
     }
 }
