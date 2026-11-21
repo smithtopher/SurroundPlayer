@@ -1571,9 +1571,9 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
         if (mode == PC_MODE_PASSTHROUGH) {
             av_channel_layout_copy(&enc_layout, &par->ch_layout);
         } else {
-            // upmixed stereo: 5.1 with back surrounds, the layout the upmix graph makes
-            enc_layout = up_src ? (AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1_BACK
-                       : src_ch > 2 ? (AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1 : (AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO;
+            // upmixed stereo: 5.1(side). The upmix graph makes back surrounds and its aformat stage
+            // moves them to the side pair; FFmpeg's DTS encoder has no 5.1(back) (1.3.0 failed to open it)
+            enc_layout = src_ch > 2 || up_src ? (AVChannelLayout)AV_CHANNEL_LAYOUT_5POINT1 : (AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO;
             if (src_ch <= 2 && !up_src && p->bs_codec == AV_CODEC_ID_AC3) rate = FFMIN(rate, 320000);
             p->aenc = open_bs_encoder(p->bs_codec, &enc_layout, rate);
             if (!p->aenc && p->bs_codec == AV_CODEC_ID_AC3) {

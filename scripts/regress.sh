@@ -178,6 +178,12 @@ run "$W/up_centre.flac" "$W/u10.spdif" --upmix && {
     check_stream "upmix ac3" "$W/u10.spdif" "ac3" "5.1" 6144
     grep -q "upmixed from stereo, transcoded" "$W/log.txt" && pass "upmix ac3: transcoded from stereo" || fail "upmix ac3: $(grep '^output' "$W/log.txt")"
 }
+# DTS too (1.3.0 couldn't open the DTS encoder for upmixed audio: it has no 5.1 with back surrounds)
+run "$W/up_anti.flac" "$W/u12.spdif" --upmix --dts && {
+    check_stream "upmix dts" "$W/u12.spdif" "dts" "5.1" 2048
+    ff -f spdif -i "$W/u12.spdif" -f f32le -ac 6 "$W/u12.raw"
+    up_check "upmix dts ambience" "$W/u12.raw" antiphase
+}
 run "$W/up_centre.flac" "$W/u11.raw" && {
     grep -q "^output: PCM 2 ch" "$W/log.txt" && pass "upmix off: stereo stays stereo PCM" || fail "upmix off: $(grep '^output' "$W/log.txt")"
 }

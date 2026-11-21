@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.2] — 2026-11-21 (macOS and Windows)
+
+### Fixed
+- **Stereo upmix with DTS output didn't play at all** ("Could not open the DTS encoder"). FFmpeg's
+  DTS encoder has no 5.1 layout with *back* surrounds, which the upmix asked for. Upmixed audio
+  is now encoded as 5.1 with side surrounds for both Dolby Digital and DTS; the upmix filter's
+  back channels are mapped onto them with levels unchanged. Found while building Surround Bridge.
+  `regress.sh` now checks upmix with DTS too.
+
+### macOS
+- Also picks up Windows 1.3.1's shared engine fix: stereo upmix over multichannel PCM goes out as
+  5.1(side) at 48 kHz (it could show as stereo on HDMI receivers). The Mac app doesn't do gapless
+  playback yet (the engine supports it).
+
 ## [1.3.1] — 2026-11-20 (Windows)
 
 ### Fixed

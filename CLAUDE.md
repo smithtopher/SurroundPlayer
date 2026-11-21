@@ -317,6 +317,9 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
   next must start at 0 in another, non-video file; `NextStarted` loads the new track's info).
   Verified in the app with silent files: one open for three tracks, switches exactly 4.0 s apart,
   AC3 upmix and multichannel PCM upmix.
+- **Upmixed AC3/DTS is encoded as 5.1(side) too (1.3.2):** FFmpeg's DTS encoder has no 5.1(back),
+  so 1.3.0/1.3.1 failed to open it for upmixed stereo in DTS mode. `enc_layout` is 5.1(side)
+  for upmixed and native 5.1 alike; the graph's aformat maps back → side. regress "upmix dts".
 - **Upmixed multichannel PCM goes out as 5.1(side) at 48 kHz** (was 5.1(back) at the source
   rate): a user's HDMI receiver showed only L/R with the old request. Same request as a native
   5.1 track; the upmix graph's aformat maps the filter's back surrounds onto the sides.
@@ -379,8 +382,7 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
     opened (files, folders or cue sheets, via Open…, drops, Finder), in `PlayerModel.add`
     (Windows: `PlayerModel.Add`, the toolbar's history button). Auto-advance doesn't add to it.
 - **Version:** `CFBundleShortVersionString` in `Resources/Info.plist`, shown in Settings. Kept
-  in step with the Windows `<Version>` (1.2.7 = same features on both; Mac 1.3.0 adds the
-  stereo upmix, Windows 1.3.0 once its UI is ported).
+  in step with the Windows `<Version>` (1.3.2 = both; the Mac app lacks gapless playback).
 
 ## Testing — IMPORTANT
 - **Windows: run test copies of the app with `SURROUND_DATA_DIR=<scratch folder>`.** The app then
