@@ -292,6 +292,7 @@ struct PCPlayer {
     int pend_art_size;
     AVFormatContext *old_fmt;        // the previous file's context, closed at the next switch/close
     int mc_req_ch, mc_req_rate;      // exclusive PCM request this file made (gapless must match)
+    int plan_mode, plan_up, plan_ch; // the route this file asked for (before any device fallback)
     uint32_t mc_req_mask;
 
     // threads
@@ -1171,7 +1172,7 @@ static void describe_audio_stream(AVStream *st, char *buf, int len);
 // Gapless: would the next file (audio stream `*as`) play exactly the way the current one does?
 // Mirrors setup_audio's decisions without touching the device.
 static int gapless_ok(PCPlayer *p, AVFormatContext *nf, int *as) {
-    if (p->vstream >= 0 || p->mode == PC_MODE_PASSTHROUGH || atomic_load(&p->n_sub) > 0 || !p->out) return 0;
+    if (p->vstream >= 0 || p->plan_mode == PC_MODE_PASSTHROUGH || atomic_load(&p->n_sub) > 0 || !p->out) return 0;
     for (unsigned i = 0; i < nf->nb_streams; i++) {
         AVStream *st = nf->streams[i];
         enum AVMediaType t = st->codecpar->codec_type;
@@ -1194,10 +1195,12 @@ static int gapless_ok(PCPlayer *p, AVFormatContext *nf, int *as) {
         if (cfg->passthrough && (native_ac3 || native_dts) && !up_src) return 0;
         if (!cfg->multichannel_pcm && (src_ch > 2 || cfg->stereo_bitstream || up_src)) mode = PC_MODE_TRANSCODE;
     }
-    if (mode != p->mode) return 0;
+    // compare plans, not outcomes: a file that asks for the same route gets the same result from
+    // the device (e.g. both fall back from Dolby Digital to PCM on a non-digital output)
+    if (mode != p->plan_mode) return 0;
     if (mode == PC_MODE_TRANSCODE) {
         int ch = up_src || src_ch > 2 ? 6 : 2;
-        if (ch != p->out_layout.nb_channels || up_src != p->upmixing) return 0;
+        if (ch != p->plan_ch || up_src != p->plan_up) return 0;
     } else {
         int want_excl = cfg->multichannel_pcm && (src_ch > 2 || up_src);
         if (want_excl != (p->mc_req_ch > 0)) return 0;
@@ -1472,6 +1475,9 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
             p->bs_codec = dts ? AV_CODEC_ID_DTS : AV_CODEC_ID_AC3;
         }
     }
+    p->plan_mode = mode;   // gapless compares the next file's plan with this one
+    p->plan_up = up_src;
+    p->plan_ch = up_src || src_ch > 2 ? 6 : 2;
     if (mode != PC_MODE_PCM) {
         if (p->bs_codec == AV_CODEC_ID_AC3) p->enc_frame = 1536;
         else p->enc_frame = mode == PC_MODE_PASSTHROUGH && par->frame_size > 0 ? par->frame_size : 512;

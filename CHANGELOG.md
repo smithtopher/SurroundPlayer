@@ -7,6 +7,9 @@
   settings** (Windows). Custom is now a saved profile: leaving it (for a preset, Off or the U key)
   keeps its values, and choosing Custom again brings them back. It's kept in settings.json
   (`upmixCustom`), so it also survives a restart.
+- **Gapless playback didn't engage when Dolby Digital/DTS fell back to PCM** (e.g. on an output
+  that isn't digital). The check compared the next file's planned route with the current file's
+  actual one; it now compares plans, so both fall back the same way and join.
 
 ### Includes 1.3.2
 - The Windows build also has 1.3.2's shared engine fix (stereo upmix with DTS output); there

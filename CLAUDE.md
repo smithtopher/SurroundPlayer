@@ -305,7 +305,9 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
 - **Gapless (engine + Windows app, 2026-11-20):** `pc_player_set_next(path)`. At demux EOF
   `try_gapless` opens the next file and `gapless_ok` checks it would play the same way (mirrors
   `setup_audio`: audio only, no subtitles, same mode, not passthrough, same transcode channel
-  class and upmix, same exclusive-PCM request `mc_req_*`). The demuxer then reads the new file
+  class and upmix, same exclusive-PCM request `mc_req_*`). It compares *plans* (`plan_mode`,
+  `plan_up`, `plan_ch`, recorded before the device is opened), not outcomes: when bitstream falls
+  back to PCM (non-digital output), comparing with the actual mode refused every join. The demuxer then reads the new file
   (old context kept in `old_fmt` until the next switch) and queues a switch marker
   (`PC_SWITCH_MARK` packet). The audio thread drains the old decoder and swaps in `sw_dec`;
   swr / upmix graph / encoder FIFO keep running. One continuous timeline: a file's pts =
