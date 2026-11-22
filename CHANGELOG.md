@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.4] — 2026-11-22 (Windows)
+
+### Fixed
+- **A track could stop part-way and jump to the next one.** A momentary error reading the
+  file (a USB drive or network share dropping out) was treated as the end of the file. With
+  gapless playback, the next track then started at that point. Now a read error is retried
+  for a few seconds, which the 10 s read-ahead covers, so a short dropout isn't heard. If the
+  file still can't be read, the track reopens at the same position. If that keeps failing,
+  playback stops with the error shown instead of silently skipping.
+
 ## [1.3.3] — 2026-11-21 (Windows)
 
 ### Fixed
