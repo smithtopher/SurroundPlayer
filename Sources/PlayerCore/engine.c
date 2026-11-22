@@ -1304,14 +1304,26 @@ static int try_gapless(PCPlayer *p) {
     return 1;
 }
 
+// A read error (a USB drive or network share dropping out for a moment) is not the end of the
+// file: FFmpeg returns the I/O error itself (EIO, EACCES...) rather than AVERROR_EOF. Treating it
+// as the end made a track stop mid-way and the playlist move on (or, with gapless, join the next
+// file there). Retry for this long, which the 10 s read-ahead covers, then report PC_EVENT_ERROR
+// so the app can reopen the file at the position being heard.
+#define READ_RETRY_NS (6 * 1000000000LL)
+
 static void *demux_thread(void *arg) {
     PCPlayer *p = arg;
     AVPacket *pkt = av_packet_alloc();
+    int64_t err_since = 0;   // first of a run of read errors, pc_now_ns(); 0 = none
+    int read_failed = 0;     // gave up and reported PC_EVENT_ERROR
     while (!atomic_load(&p->quit)) {
         pc_mutex_lock(&p->lock);
         if (p->seek_req) {
             double pos = p->seek_pos;
             pc_mutex_unlock(&p->lock);
+            if (p->fmt->pb) { p->fmt->pb->error = 0; p->fmt->pb->eof_reached = 0; }
+            err_since = 0;
+            read_failed = 0;
             do_seek(p, pos);
             pc_mutex_lock(&p->lock);
             if (p->seek_pos == pos) p->seek_req = 0;
@@ -1319,11 +1331,35 @@ static void *demux_thread(void *arg) {
         pc_mutex_unlock(&p->lock);
 
         int64_t total = p->aq.bytes + p->vq.bytes;
-        if ((queue_enough(p, &p->aq, p->astream) && queue_enough(p, &p->vq, p->vstream)) || total > 256 * 1024 * 1024) {
+        if (read_failed ||
+            (queue_enough(p, &p->aq, p->astream) && queue_enough(p, &p->vq, p->vstream)) || total > 256 * 1024 * 1024) {
             pc_sleep_us(10000);
             continue;
         }
         int ret = av_read_frame(p->fmt, pkt);
+        if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF && !atomic_load(&p->demux_eof)) {
+            int64_t now = pc_now_ns();
+            if (!err_since) {
+                err_since = now;
+                fprintf(stderr, "[player] read error: %s, retrying\n", av_err2str(ret));
+            }
+            if (now - err_since < READ_RETRY_NS) {
+                // the AVIOContext keeps its position on a failed read; clear the error and try again
+                if (p->fmt->pb) { p->fmt->pb->error = 0; p->fmt->pb->eof_reached = 0; }
+                pc_sleep_us(100000);
+                continue;
+            }
+            read_failed = 1;
+            char msg[160];
+            snprintf(msg, sizeof(msg), "read error: %s", av_err2str(ret));
+            fprintf(stderr, "[player] %s, giving up\n", msg);
+            if (p->ecb) p->ecb(p->cbctx, PC_EVENT_ERROR, msg);
+            continue;
+        }
+        if (ret >= 0 && err_since) {
+            fprintf(stderr, "[player] read recovered after %.1f s\n", (pc_now_ns() - err_since) / 1e9);
+            err_since = 0;
+        }
         if (ret < 0) {
             if (ret != AVERROR(EAGAIN) && !atomic_load(&p->demux_eof)) {
                 if (p->astream >= 0 && try_gapless(p)) continue;   // gapless: on into the next file

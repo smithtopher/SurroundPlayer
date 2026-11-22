@@ -329,6 +329,16 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
 - **Upmixed multichannel PCM goes out as 5.1(side) at 48 kHz** (was 5.1(back) at the source
   rate): a user's HDMI receiver showed only L/R with the old request. Same request as a native
   5.1 track; the upmix graph's aformat maps the filter's back surrounds onto the sides.
+- **Read errors (2026-11-22):** a user's Windows app sometimes stopped mid-track and went to the next
+  one. The demux thread treated every `av_read_frame` failure as EOF (and, with gapless, joined
+  the next file there). FFmpeg returns I/O errors as themselves (EIO, EACCES...), not
+  AVERROR_EOF. Now it clears `pb->error`/`eof_reached` and retries for `READ_RETRY_NS` (6 s,
+  covered by the read-ahead), then sends `PC_EVENT_ERROR` "read error: ..." (no EOF follows).
+  Both apps (`ReadFailed` / `readFailed`) reopen at the heard position, up to 3 times per track,
+  then stop with the error shown. A recovered error loses one parser frame for raw formats
+  (FFmpeg flushes parsers on any read error). Test: `scripts/test_read_errors.py` (Windows
+  byte-range locks). The app path was tested on Windows with silent WAV. The Swift change
+  hasn't been compiled. The user's real cause wasn't confirmed (where their files live is unknown).
 - **Read-ahead:** `queue_enough` in engine.c: the demuxer reads until each queue holds
   `READ_AHEAD_SECONDS` (10 s; was 2 s, which let USB-drive stalls pause playback) or
   `READ_AHEAD_PACKETS` for duration-less packets, capped at 256 MB in total.

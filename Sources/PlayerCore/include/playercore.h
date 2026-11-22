@@ -35,7 +35,8 @@ typedef enum {
 
 typedef enum {
     PC_EVENT_EOF = 1,
-    PC_EVENT_ERROR = 2,
+    PC_EVENT_ERROR = 2,    // reading the file keeps failing (drive / share gone): message says why;
+                           // playback stops once the read-ahead runs out (no PC_EVENT_EOF follows)
     PC_EVENT_NEXT = 3,     // gapless: playback has crossed into the file given to pc_player_set_next
 } PCEvent;
 

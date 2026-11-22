@@ -127,6 +127,11 @@ public sealed partial class PlayerModel : Observable
             int gen = Volatile.Read(ref _generation);
             if (ev == Native.PC_EVENT_EOF) _ui.TryEnqueue(() => TrackFinished(gen));
             else if (ev == Native.PC_EVENT_NEXT) _ui.TryEnqueue(() => NextStarted(gen));
+            else if (ev == Native.PC_EVENT_ERROR)
+            {
+                string text = Marshal.PtrToStringUTF8(msg) ?? "read error";
+                _ui.TryEnqueue(() => ReadFailed(gen, text));
+            }
         };
         _deviceCb = ctx => { DebugTrace.Log("device change notification"); _ui.TryEnqueue(RefreshDevices); };
         Native.pc_player_set_callbacks(_player, _videoCb, _eventCb, IntPtr.Zero);
@@ -721,6 +726,32 @@ public sealed partial class PlayerModel : Observable
     private void TrackFinished(int generation)
     {
         if (generation == Volatile.Read(ref _generation)) Next();
+    }
+
+    // Reading the file kept failing (the engine already retried for a few seconds): reopen it at
+    // the position being heard. A file that fails again and again (a bad sector) stops with the
+    // error shown, rather than silently skipping to the next track.
+    private Track? _readErrorTrack;
+    private int _readErrors;
+
+    private void ReadFailed(int generation, string message)
+    {
+        if (generation != Volatile.Read(ref _generation) || Current == null) return;
+        DebugTrace.Log($"read failed: {Current.Name}: {message} at {Position:F2}");
+        if (_readErrorTrack != Current) { _readErrorTrack = Current; _readErrors = 0; }
+        var track = Current;
+        double pos = Position;
+        if (++_readErrors <= 3 && System.IO.File.Exists(track.Path))
+        {
+            Play(track, pos, !IsPlaying, CurrentAudioTrack);
+            if (_isOpen) return;
+        }
+        Stop();
+        Current = track;
+        Position = pos;
+        _resumeTrack = track;    // Play resumes here
+        _resumeAt = pos;
+        ErrorMessage = $"{track.Name}: {message}";
     }
 
     // ------------------------------------------------------------------ info

@@ -295,12 +295,15 @@ final class PlayerModel: ObservableObject {
             // macOS video back-end: native frames are CVPixelBuffers (borrowed for this call)
             let pb = Unmanaged<CVPixelBuffer>.fromOpaque(frame).takeUnretainedValue()
             Unmanaged<EngineBridge>.fromOpaque(ctx).takeUnretainedValue().sink.display(pb)
-        }, { ctx, event, _ in
+        }, { ctx, event, message in
             guard let ctx else { return }
             let bridge = Unmanaged<EngineBridge>.fromOpaque(ctx).takeUnretainedValue()
             let gen = bridge.generation
             if event == Int32(PC_EVENT_EOF.rawValue) {
                 DispatchQueue.main.async { bridge.model?.trackFinished(generation: gen) }
+            } else if event == Int32(PC_EVENT_ERROR.rawValue) {
+                let text = message.map { String(cString: $0) } ?? "read error"
+                DispatchQueue.main.async { bridge.model?.readFailed(generation: gen, message: text) }
             }
         }, ctx)
         var up = upmix.engine
@@ -729,6 +732,30 @@ final class PlayerModel: ObservableObject {
     fileprivate func trackFinished(generation: Int) {
         guard generation == bridge.generation else { return }
         next()
+    }
+
+    // Reading the file kept failing (the engine already retried for a few seconds): reopen it at
+    // the position being heard. A file that fails again and again stops with the error shown,
+    // rather than silently skipping to the next track.
+    private var readErrorTrackID: UUID?
+    private var readErrors = 0
+
+    fileprivate func readFailed(generation: Int, message: String) {
+        guard generation == bridge.generation, let i = currentIndex, playlist.indices.contains(i) else { return }
+        let track = playlist[i]
+        if readErrorTrackID != track.id { readErrorTrackID = track.id; readErrors = 0 }
+        readErrors += 1
+        let pos = position
+        if readErrors <= 3, FileManager.default.fileExists(atPath: track.url.path) {
+            play(index: i, start: pos, paused: !isPlaying, audioTrack: currentAudioTrack)
+            if isOpen { return }
+        }
+        stop()
+        currentIndex = i
+        position = pos
+        resumeTrackID = track.id
+        resumeAt = pos
+        errorMessage = "\(track.name): \(message)"
     }
 
     // MARK: info
