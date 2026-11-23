@@ -77,6 +77,7 @@ public sealed class SettingsDialog : ContentDialog
             "the option above is on; turn it on if your amp drops out when switching between PCM and surround."));
         panel.Children.Add(_dtsNote);
         BuildUpmix(panel);
+        BuildTone(panel);
         panel.Children.Add(Section("Visualiser"));
         var vis = new ToggleSwitch { Header = "Show visualiser for music", IsOn = model.VisualizerEnabled };
         vis.Toggled += (_, _) => _m.VisualizerEnabled = vis.IsOn;
@@ -197,8 +198,6 @@ public sealed class SettingsDialog : ContentDialog
         foreach (var hz in Highcuts) _upmixHighcut.Items.Add(hz == 0 ? "Off" : $"{hz / 1000} kHz");
         adv.Children.Add(_upmixXover);
         adv.Children.Add(_upmixMove);
-        AddSlider("Bass boost", 0, 12, 0.5, () => _m.UpmixBassDb, v => _m.UpmixBassDb = v,
-                  v => v < 0.25 ? "Off" : $"+{v:0.0} dB", adv);
         AddSlider("Rear delay", 0, 30, 1, () => _m.UpmixRearDelayMs, v => _m.UpmixRearDelayMs = v,
                   v => v < 0.5 ? "Off" : $"{v:0} ms", adv);
         adv.Children.Add(_upmixHighcut);
@@ -224,6 +223,25 @@ public sealed class SettingsDialog : ContentDialog
         _upmixXover.SelectionChanged += (_, _) => { if (!_loading && _upmixXover.SelectedIndex >= 0) { _m.UpmixCrossoverHz = Crossovers[_upmixXover.SelectedIndex]; LoadUpmixMode(); } };
         _upmixMove.SelectionChanged += (_, _) => { if (!_loading && _upmixMove.SelectedIndex >= 0) { _m.UpmixLfeMove = _upmixMove.SelectedIndex == 1; LoadUpmixMode(); } };
         _upmixHighcut.SelectionChanged += (_, _) => { if (!_loading && _upmixHighcut.SelectedIndex >= 0) { _m.UpmixRearHighcutHz = Highcuts[_upmixHighcut.SelectedIndex]; LoadUpmixMode(); } };
+    }
+
+    // ------------------------------------------------------------------ tone
+
+    private readonly StackPanel _tone = new() { Spacing = 10 };
+
+    private void BuildTone(StackPanel panel)
+    {
+        panel.Children.Add(Section("Tone"));
+        AddSlider("Bass boost (100 Hz)", 0, 12, 0.5, () => _m.BassDb, v => _m.BassDb = v,
+                  v => v < 0.25 ? "Off" : $"+{v:0.0} dB", _tone);
+        AddSlider("Treble boost (6 kHz)", 0, 12, 0.5, () => _m.TrebleDb, v => _m.TrebleDb = v,
+                  v => v < 0.25 ? "Off" : $"+{v:0.0} dB", _tone);
+        _tone.Children.Add(Note(
+            "Turn both up for listening at low volume: quiet sound loses bass first, and treble too, to the ear (the " +
+            "Fletcher-Munson curves). Works on everything the player decodes: stereo, upmixed stereo and native 5.1/7.1, " +
+            "whatever the output. Tracks passed through untouched as Dolby Digital or DTS can't be changed; turn " +
+            "pass-through off above to apply it to them too. Changes apply while playing."));
+        panel.Children.Add(_tone);
     }
 
     private void AddSlider(string title, double min, double max, double step, Func<double> get, Action<double> set,

@@ -292,6 +292,30 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
   leaving Custom, restored when choosing it again; sliders moved on a preset become Custom).
   A user lost their Custom values comparing against Music before this. **The Mac app still
   has that bug** (`UpmixSettings.apply` only knows presets): port the profile there too.
+- **Tone (engine + Windows 1.4.0, 2026-11-23):** `PCUpmix.bass_db` (100 Hz low shelf) and
+  `treble_db` (6 kHz high shelf, appended to the struct; Native.cs mirrors it), 0..12 dB, Q 0.7.
+  - In the upmix graph, before the surround filter (from Surround Bridge, SHARED.md there): our
+    FFmpeg has no `treble` filter, so treble is a second `bass` of −T plus +T of gain through
+    surround's `fl_in`/`fr_in` (exactly a high shelf of +T for FFmpeg's biquads).
+  - **Everything else decoded** (native multichannel, stereo with the upmix off, any mode but
+    passthrough) goes through `pc_tone_create`: `bass@ub → bass@ut (−T) → alimiter@ul
+    (level_in = +T, limit 0.98, latency=1) → aformat`, in the output's own layout and sample
+    format (`tone_deliver` in engine.c, between swr and `deliver`). No latency: output sample
+    k = input sample k, so next_pts isn't restamped; `tone_held` (the limiter lookahead) is
+    added to the gapless join and the discontinuity check. EOF via `pc_upmix_end` flushes it
+    exactly. Flat tone = no graph (bit-exact, regress "tone flat").
+  - Live changes come through `upmix_gen`. A graph started cold on a running signal clicked
+    (a 2.5x spike), so mid-stream it's created flat and ramps `TONE_RAMP_DB` (1 dB) per chunk
+    to the settings; ramping back to flat frees it. At a stream start (open/seek/jump,
+    `tone_gen == -1`) it starts at the settings.
+  - Tests: regress "Tone" (shelf levels for upmix / native 5.1 / stereo, flat bit-exact, no
+    samples lost, channel mapping, no latency, AC3 + DTS transcode, passthrough untouched,
+    toggled live with `pcdump --tone-toggle-ms`: no click). `pcdump --no-upmix` keeps the
+    `--upmix-set` values with the upmix off.
+  - Apps: tone is kept out of the upmix presets/profiles (`UpmixProfiles` no longer has bass;
+    `PlayerModel.BassDb/TrebleDb` save and push without touching the mode). Settings ▸ Tone in
+    both apps; keys `upmixBassDb`, `upmixTrebleDb`. **The Mac changes (Upmix.swift,
+    SettingsView.swift) haven't been compiled**; the Windows dialog wasn't checked by eye.
 - **Source format:** `PCInfo.source_rate` / `source_bits` (`audio_stream_bits`:
   `bits_per_raw_sample`, else the sample size of lossless/PCM codecs, else 0 = lossy). The
   source description ends ", 24-bit". Windows shows "24-bit / 96 kHz" beside the output badge
@@ -390,8 +414,9 @@ scripts/regress.sh         behavioural output tests (codec/layout, burst spacing
     Both apps show these as one "Surround output" choice: DD / DTS / Multichannel PCM / Off
     (Mac: `PlayerModel.surroundOutput`, which sets them together with a single reopen).
   - Upmix: `upmixMode` (0 off, 1 music, 2 movies, 3 wide, 4 custom), `upmixVideo`, `upmixSurroundDb`,
-    `upmixCenter`, `upmixWidth`, `upmixLfeDb`, `upmixCrossoverHz`, `upmixLfeMove`, `upmixBassDb`,
+    `upmixCenter`, `upmixWidth`, `upmixLfeDb`, `upmixCrossoverHz`, `upmixLfeMove`,
     `upmixRearDelayMs`, `upmixRearHighcutHz`, `upmixLastMode` (what U turns back on).
+  - Tone: `upmixBassDb`, `upmixTrebleDb` (not part of the presets).
   - Other: `avOffsetMs`, `visualizerEnabled`, `subtitleLanguage` ("" = the file's default
     track, "off", "*", or a 2-letter code; set when the user picks a track).
   - `recentFiles`: File > Open Recent, newest first, at most 10 paths. It records what the user

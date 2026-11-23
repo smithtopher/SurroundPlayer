@@ -228,5 +228,90 @@ run "$W/gl_a.flac" "$W/g3.raw" --then "$W/src.flac" && {
     grep -q "^next started" "$W/log.txt" && fail "gapless: joined a 5.1 file after stereo PCM" || pass "gapless: different output mode not joined"
 }
 
+echo "Tone (bass 100 Hz / treble 6 kHz shelves): upmixed, native 5.1 and plain stereo"
+# level (dB) at given frequencies, summed over some channels of an f32le dump, seconds 2..4
+cat > "$W/tone.py" <<'EOF'
+import sys, math
+from array import array
+a = array('f'); a.frombytes(open(sys.argv[1], 'rb').read()); ch = int(sys.argv[2]); rate = 48000
+chans = [int(c) for c in sys.argv[3].split(',')]
+seg = a[2 * rate * ch: 4 * rate * ch]; m = len(seg) // ch
+out = []
+for f in map(float, sys.argv[4:]):
+    w = 2 * math.pi * f / rate; e = 0.0
+    for c in chans:
+        x = seg[c::ch]
+        re = math.fsum(x[i] * math.cos(w * i) for i in range(m)); im = math.fsum(x[i] * math.sin(w * i) for i in range(m))
+        e += (re * re + im * im) / (m * m)
+    out.append('%.2f' % (10 * math.log10(e) if e > 0 else -150))
+print(' '.join(out))
+EOF
+tonecheck() { # name base-levels levels lo,hi per frequency (dB change from no boost)
+    local r; r=$("$PY" -c '
+import sys
+b = [float(v) for v in sys.argv[1].split()]; x = [float(v) for v in sys.argv[2].split()]
+d = [xi - bi for xi, bi in zip(x, b)]
+ok = all(lo <= di <= hi for di, (lo, hi) in zip(d, [tuple(map(float, r.split(","))) for r in sys.argv[3:]]))
+print(("ok " if ok else "BAD ") + "60 Hz %+.1f, 1 kHz %+.1f, 12 kHz %+.1f dB" % tuple(d))' "$2" "$3" $4)
+    case "$r" in ok*) pass "$1: ${r#ok }";; *) fail "$1: ${r#BAD }";; esac
+}
+TONES="0.1*sin(2*PI*60*t)+0.1*sin(2*PI*1000*t)+0.1*sin(2*PI*12000*t)"
+ff -f lavfi -i "aevalsrc=$TONES|$TONES:s=48000:d=6" -t 6 -c:a flac "$W/tn2.flac"
+ff -f lavfi -i "aevalsrc=$TONES|$TONES|$TONES|$TONES|$TONES|$TONES:s=48000:d=6:c=5.1(side)" -t 6 -c:a flac "$W/tn6.flac"
+tone_set() { # label source dump-args channel-count channels: no boost, treble +6, bass +6, both +9
+    local base t b l
+    run "$2" "$W/tq0.raw" $3 ${6:-} && base=$("$PY" -I "$W/tone.py" "$W/tq0.raw" $4 $5 60 1000 12000) || return
+    run "$2" "$W/tqt.raw" $3 --upmix-set "${6:+${6#--upmix-set }}${6:+,}treble=6" && t=$("$PY" -I "$W/tone.py" "$W/tqt.raw" $4 $5 60 1000 12000)
+    run "$2" "$W/tqb.raw" $3 --upmix-set "${6:+${6#--upmix-set }}${6:+,}bass=6" && b=$("$PY" -I "$W/tone.py" "$W/tqb.raw" $4 $5 60 1000 12000)
+    run "$2" "$W/tql.raw" $3 --upmix-set "${6:+${6#--upmix-set }}${6:+,}bass=9,treble=9" && l=$("$PY" -I "$W/tone.py" "$W/tql.raw" $4 $5 60 1000 12000)
+    [ -n "${t:-}" ] && tonecheck "$1 treble +6 dB" "$base" "$t" "-0.7,0.7 -0.7,0.9 5.0,6.8"
+    [ -n "${b:-}" ] && tonecheck "$1 bass +6 dB" "$base" "$b" "5.0,6.8 -0.7,0.7 -0.7,0.7"
+    [ -n "${l:-}" ] && tonecheck "$1 loudness (bass +9, treble +9)" "$base" "$l" "8.0,10.0 -1.0,1.0 8.0,10.0"
+}
+# upmixed stereo (fronts FL FR FC; LFE off so the bass stays in the fronts)
+tone_set "upmix" "$W/tn2.flac" "--mc-pcm --upmix" 6 0,1,2 "--upmix-set lfe=-40"
+# native 5.1, multichannel PCM (every main channel)
+tone_set "native 5.1" "$W/tn6.flac" "--mc-pcm" 6 0,1,2,4,5
+# stereo PCM with the upmix off
+tone_set "stereo" "$W/tn2.flac" "--pcm --no-upmix" 2 0,1
+grep -q "^output: PCM 2 ch" "$W/log.txt" && pass "tone stereo: still stereo PCM" || fail "tone stereo: $(grep '^output' "$W/log.txt")"
+# flat tone skips the graph (bit-exact), and the graph's EOF flush keeps every sample
+run "$W/src.flac" "$W/tf0.raw" --mc-pcm && run "$W/src.flac" "$W/tf1.raw" --mc-pcm --no-upmix --upmix-set bass=0,treble=0 && {
+    cmp -s "$W/tf0.raw" "$W/tf1.raw" && pass "tone flat: output bit-identical to no tone" || fail "tone flat: output differs"
+}
+run "$W/src.flac" "$W/tf2.raw" --mc-pcm --no-upmix --upmix-set treble=6 && {
+    [ "$(wc -c < "$W/tf2.raw")" = "$(wc -c < "$W/tf0.raw")" ] && pass "tone: no samples lost or added ($(wc -c < "$W/tf2.raw") bytes)" \
+        || fail "tone: $(wc -c < "$W/tf2.raw") bytes, want $(wc -c < "$W/tf0.raw")"
+    ff -f f32le -ar 48000 -ch_layout "5.1(side)" -i "$W/tf2.raw" -c:a pcm_s16le "$W/tf2.wav"
+    f=$("$PY" -I "$W/freqs.py" "$W/tf2.wav")
+    [ "$f" = "$SRC_FREQS" ] && pass "tone native 5.1: channel mapping ($f)" || fail "tone native 5.1: channels '$f' != source '$SRC_FREQS'"
+}
+# no latency: an impulse stays where it was
+run "$W/up_imp.flac" "$W/ti.raw" --pcm --no-upmix --upmix-set treble=6 && {
+    k=$("$PY" -I -c "
+import sys
+from array import array
+a = array('f'); a.frombytes(open(sys.argv[1], 'rb').read()); x = a[0::2]
+print(max(range(len(x)), key=lambda i: abs(x[i])))" "$W/ti.raw")
+    [ "$k" -ge 48000 ] && [ "$k" -le 48002 ] && pass "tone latency: impulse at $k (no delay)" || fail "tone latency: impulse at $k, want 48000"
+}
+# encoded paths take it too (5.1 transcode: planar float for AC3, packed s32 for DTS)
+run "$W/eac3.mkv" "$W/te1.spdif" --no-upmix --upmix-set bass=6,treble=6 && { check_stream "tone ac3" "$W/te1.spdif" "ac3" "5.1(side)" 6144; check_channels "tone ac3" "$W/te1.spdif"; }
+run "$W/eac3.mkv" "$W/te2.spdif" --dts --no-upmix --upmix-set bass=6,treble=6 && { check_stream "tone dts" "$W/te2.spdif" "dts" "5.1(side)" 2048; check_channels "tone dts" "$W/te2.spdif"; }
+# switched on and off while it plays (every few ms of wall clock: many times through a dump):
+# no click (a cold filter on a running signal spiked to 2.5x), nothing lost or added
+ff -f lavfi -i "aevalsrc=0.25*sin(2*PI*1000*t)|0.25*sin(2*PI*1000*t):s=48000:d=60" -t 60 -c:a flac "$W/tg.flac"
+run "$W/tg.flac" "$W/tg.raw" --pcm --no-upmix --upmix-set bass=12,treble=12 --tone-toggle-ms 2 && {
+    r=$("$PY" -I -c "
+import sys
+from array import array
+a = array('f'); a.frombytes(open(sys.argv[1], 'rb').read()); x = a[0::2]
+step = max(abs(x[i] - x[i - 1]) for i in range(1000, len(x)))
+print(('ok ' if len(x) == 2880000 and step < 0.05 else 'BAD ') + '%d frames, largest step %.4f (the sine alone: 0.033)' % (len(x), step))" "$W/tg.raw")
+    case "$r" in ok*) pass "tone toggled live $(grep -o '[0-9]* *$' <<< "$(grep '^tone toggles' "$W/log.txt")")x: ${r#ok }";; *) fail "tone toggled live: ${r#BAD }";; esac
+}
+# passthrough can't be changed: still the source's own packets
+run "$W/ac3.mkv" "$W/te3.spdif" --no-upmix --upmix-set bass=6,treble=6 && check_passthrough "tone ac3 pass (untouched)" "$W/te3.spdif" "$W/ac3.mkv" ac3
+
 [ $FAIL = 0 ] && echo "ALL PASSED" || echo "SOME CHECKS FAILED"
 exit $FAIL

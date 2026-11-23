@@ -31,7 +31,8 @@ public sealed class Settings
     public double upmixLfeDb { get; set; } = -6;         // -40 = no LFE
     public int upmixCrossoverHz { get; set; } = 100;
     public bool upmixLfeMove { get; set; } = false;      // false copy bass to the sub, true move it
-    public double upmixBassDb { get; set; } = 0;
+    public double upmixBassDb { get; set; } = 0;         // tone (bass + treble boost): not part of the presets,
+    public double upmixTrebleDb { get; set; } = 0;       // and it applies to everything decoded, upmixed or not
     public double upmixRearDelayMs { get; set; } = 10;
     public int upmixRearHighcutHz { get; set; } = 7000;  // 0 = off
     public UpmixValues? upmixCustom { get; set; }        // the Custom profile, kept while a preset is chosen

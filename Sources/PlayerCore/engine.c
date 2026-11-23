@@ -273,7 +273,12 @@ struct PCPlayer {
     int um_gen;
     double um_t0;                    // pts of the first sample fed to the current graph
     int64_t um_in, um_out;           // samples fed / taken out since um_t0
-    AVFrame *um_frame;
+    AVFrame *um_frame;               // graph output (upmix and tone)
+    // tone (bass/treble boost) for decoded audio that isn't upmixed. Audio thread.
+    PCUpmixer *tone;                 // NULL while tone is flat (audio goes straight through)
+    int tone_gen;                    // upmix_gen it was set up for; -1: decide at the next chunk
+    int64_t tone_held;               // samples in the graph not out yet (the limiter's lookahead)
+    PCUpmix tone_want, tone_now;     // the settings, and what the graph has now (ramping toward them)
 
     // gapless (pc_player_set_next). The timeline runs on across files: a file's pts are its own
     // (pts - start) plus the offset of the point where it joined.
@@ -637,6 +642,9 @@ static void audio_reset(PCPlayer *p) {
     if (sw) audio_switch_now(p, swoff);
     tap_reset(p);
     pc_upmix_free(&p->um);      // rebuilt at the next frame (seek: a fresh timeline)
+    pc_upmix_free(&p->tone);
+    p->tone_held = 0;
+    p->tone_gen = -1;
     if (p->adec) avcodec_flush_buffers(p->adec);
     swr_free(&p->swr);
     if (p->fifo) av_audio_fifo_reset(p->fifo);
@@ -766,7 +774,7 @@ static int upmix_feed(PCPlayer *p, uint8_t **data, int n, double first_pts, int 
         p->um_t0 = !isnan(first_pts) ? first_pts : !isnan(expected) ? expected : isnan(p->next_pts) ? 0 : p->next_pts;
         p->um_in = p->um_out = 0;
     }
-    if (pc_upmix_send(p->um, (const float *const *)data, n) < 0) return 0;
+    if (pc_upmix_send(p->um, data, n) < 0) return 0;
     p->um_in += n;
     return upmix_pull(p, serial);
 }
@@ -782,6 +790,77 @@ static int upmix_flush(PCPlayer *p, int serial) {
     av_freep(&sil[0]);
     av_freep(&sil);
     return r;
+}
+
+// ---------------------------------------------------------------------------
+// tone for audio that isn't upmixed: converted samples -> tone graph -> deliver(). The graph
+// has no latency (output sample k = input sample k), so next_pts runs on unchanged; it only
+// holds the limiter's few ms of lookahead (tone_held). Flat tone skips it (bit-exact output).
+
+#define TONE_RAMP_DB 1.0f   // per chunk (a decoded frame, ~20-90 ms): 0 -> 12 dB in well under a second
+
+static int tone_pull(PCPlayer *p, int serial) {
+    while (pc_upmix_receive(p->tone, p->um_frame) >= 0) {
+        int n = p->um_frame->nb_samples;
+        p->tone_held -= n;
+        int r = deliver(p, p->um_frame->extended_data, n, serial);
+        av_frame_unref(p->um_frame);
+        if (r < 0) return -1;
+    }
+    return 0;
+}
+
+// Tone turned flat, or the end of the stream: let the graph's last samples out, then free it.
+static int tone_end(PCPlayer *p, int serial) {
+    if (!p->tone) return 0;
+    int r = pc_upmix_end(p->tone) == 0 ? tone_pull(p, serial) : 0;
+    pc_upmix_free(&p->tone);
+    p->tone_held = 0;
+    return r;
+}
+
+static float tone_step(float now, float want) {
+    return fabsf(want - now) <= TONE_RAMP_DB ? want : now + (want > now ? TONE_RAMP_DB : -TONE_RAMP_DB);
+}
+
+static int tone_deliver(PCPlayer *p, uint8_t **data, int n, int serial) {
+    int gen = atomic_load(&p->upmix_gen), created = 0;
+    if (gen != p->tone_gen) {
+        int fresh = p->tone_gen == -1;   // the start of a stream (open, seek, jump)
+        p->tone_gen = gen;
+        PCUpmix u = upmix_settings(p);
+        p->tone_want = u;
+        if (!p->tone && pc_tone_wanted(&u) && p->um_frame) {
+            // mid-stream, start flat: the shelves' state fills with the music while they still
+            // pass it unchanged, then the boost ramps in (a filter started cold on a running
+            // signal clicks). At the start of a stream the output starts there anyway.
+            PCUpmix flat = u;
+            if (!fresh) flat.bass_db = flat.treble_db = 0;
+            char e[256] = "";
+            p->tone = pc_tone_create(&flat, p->out_rate, &p->out_layout, p->out_fmt, e, sizeof(e));
+            p->tone_held = 0;
+            p->tone_now = flat;
+            created = p->tone != NULL;
+        }
+    }
+    if (created) {
+        // this first chunk goes through flat
+    } else if (p->tone && (p->tone_now.bass_db != p->tone_want.bass_db || p->tone_now.treble_db != p->tone_want.treble_db)) {
+        // ramp toward the settings a step per chunk, like a slider moving
+        p->tone_now.bass_db = tone_step(p->tone_now.bass_db, p->tone_want.bass_db);
+        p->tone_now.treble_db = tone_step(p->tone_now.treble_db, p->tone_want.treble_db);
+        if (pc_upmix_update(p->tone, &p->tone_now) != 0) pc_upmix_free(&p->tone);
+    } else if (p->tone && !pc_tone_wanted(&p->tone_now)) {
+        if (tone_end(p, serial) < 0) return -1;   // ramped down to flat: straight through again
+    }
+    if (!p->tone) return deliver(p, data, n, serial);
+    if (pc_upmix_send(p->tone, data, n) < 0) {   // allocation failure: carry on without tone
+        pc_upmix_free(&p->tone);
+        p->tone_held = 0;
+        return deliver(p, data, n, serial);
+    }
+    p->tone_held += n;
+    return tone_pull(p, serial);
 }
 
 static int audio_frame(PCPlayer *p, AVFrame *f, int serial) {
@@ -801,8 +880,15 @@ static int audio_frame(PCPlayer *p, AVFrame *f, int serial) {
         return upmix_feed(p, p->cvt, nu, isnan(pts) ? NAN : pts - (double)delay / p->out_rate, serial);
     }
     if (!isnan(pts)) {
-        double expected = p->next_pts + (double)delay / p->out_rate;
-        if (isnan(p->next_pts) || fabs(expected - pts) > 0.3) p->next_pts = pts - (double)delay / p->out_rate;
+        double expected = p->next_pts + (double)(delay + p->tone_held) / p->out_rate;
+        if (isnan(p->next_pts) || fabs(expected - pts) > 0.3) {
+            if (p->tone) {   // a jump: what the tone graph holds belongs to the old timeline
+                pc_upmix_free(&p->tone);
+                p->tone_held = 0;
+                p->tone_gen = -1;
+            }
+            p->next_pts = pts - (double)delay / p->out_rate;
+        }
     } else if (isnan(p->next_pts)) {
         p->next_pts = 0;
     }
@@ -810,7 +896,7 @@ static int audio_frame(PCPlayer *p, AVFrame *f, int serial) {
     if (max_out <= 0 || ensure_cvt(p, max_out) < 0) return 0;
     int n = swr_convert(p->swr, p->cvt, max_out, (const uint8_t **)f->extended_data, f->nb_samples);
     if (n <= 0) return 0;
-    return deliver(p, p->cvt, n, serial);
+    return tone_deliver(p, p->cvt, n, serial);
 }
 
 static void audio_drain(PCPlayer *p, AVFrame *frame, int serial) {
@@ -825,11 +911,12 @@ static void audio_drain(PCPlayer *p, AVFrame *frame, int serial) {
             int max_out = swr_get_out_samples(p->swr, 0);
             if (max_out > 0 && ensure_cvt(p, max_out) == 0) {
                 int n = swr_convert(p->swr, p->cvt, max_out, NULL, 0);
-                if (n > 0 && (p->upmixing ? upmix_feed(p, p->cvt, n, NAN, serial) : deliver(p, p->cvt, n, serial)) < 0)
+                if (n > 0 && (p->upmixing ? upmix_feed(p, p->cvt, n, NAN, serial) : tone_deliver(p, p->cvt, n, serial)) < 0)
                     return;
             }
         }
         if (p->upmixing && upmix_flush(p, serial) < 0) return;
+        if (tone_end(p, serial) < 0) return;
         if (p->mode == PC_MODE_TRANSCODE) {
             int left = av_audio_fifo_size(p->fifo);
             if (left > 0) {
@@ -883,7 +970,8 @@ static void audio_switch(PCPlayer *p, AVFrame *frame, int serial) {
     // where the next file's first sample lands on the timeline
     double join;
     if (p->upmixing && p->um) join = p->um_t0 + (double)p->um_in / p->out_rate;
-    else if (!isnan(p->next_pts)) join = p->next_pts + (p->swr ? (double)swr_get_delay(p->swr, p->out_rate) / p->out_rate : 0);
+    else if (!isnan(p->next_pts))
+        join = p->next_pts + (double)((p->swr ? swr_get_delay(p->swr, p->out_rate) : 0) + p->tone_held) / p->out_rate;
     else {
         pc_mutex_lock(&p->lock);
         join = p->sw_offset;
@@ -1653,13 +1741,13 @@ static int setup_audio(PCPlayer *p, char *err, int errlen) {
         PCUpmixer *test = pc_upmix_create(&up, p->out_rate, &p->out_layout, p->out_fmt, e, sizeof(e));
         if (test) {
             pc_upmix_free(&test);
-            p->um_frame = av_frame_alloc();
         } else {
             p->upmixing = 0;
             size_t l = strlen(p->info.output);
             snprintf(p->info.output + l, sizeof(p->info.output) - l, " [upmix unavailable: %s]", e);
         }
     }
+    if (!p->um_frame && mode != PC_MODE_PASSTHROUGH) p->um_frame = av_frame_alloc();   // upmix / tone output
     p->info.mode = mode;
     describe_audio_stream(st, p->info.source_audio, sizeof(p->info.source_audio));
     p->info.source_rate = st->codecpar->sample_rate;
@@ -1858,6 +1946,8 @@ static void close_internal(PCPlayer *p, int keep_out) {
     avcodec_free_context(&p->vdec);
     avcodec_free_context(&p->aenc);
     pc_upmix_free(&p->um);
+    pc_upmix_free(&p->tone);
+    p->tone_held = 0;
     av_frame_free(&p->um_frame);
     p->upmixing = 0;
     swr_free(&p->swr);

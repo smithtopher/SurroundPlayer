@@ -1,6 +1,9 @@
 // Stereo upmix to 5.1 (port of the Mac app's Upmix.swift): presets, the user's settings
 // (settings.json "upmix*" keys, same names as the Mac's UserDefaults) and pushing them to the
 // engine (pc_upmix.c does the work). Sliders apply live; on/off and "include video" reopen.
+// Tone (bass + treble boost) travels in the same engine struct but isn't part of the upmix: it
+// applies to everything that's decoded (upmixed, native multichannel, stereo), and not to tracks
+// passed through as Dolby Digital / DTS.
 using System;
 
 namespace SurroundPlayer;
@@ -48,9 +51,21 @@ public sealed partial class PlayerModel
     public double UpmixLfeDb { get => _settings.upmixLfeDb; set => SetUpmixValue(() => _settings.upmixLfeDb = value, _settings.upmixLfeDb != value); }
     public int UpmixCrossoverHz { get => _settings.upmixCrossoverHz; set => SetUpmixValue(() => _settings.upmixCrossoverHz = value, _settings.upmixCrossoverHz != value); }
     public bool UpmixLfeMove { get => _settings.upmixLfeMove; set => SetUpmixValue(() => _settings.upmixLfeMove = value, _settings.upmixLfeMove != value); }
-    public double UpmixBassDb { get => _settings.upmixBassDb; set => SetUpmixValue(() => _settings.upmixBassDb = value, _settings.upmixBassDb != value); }
     public double UpmixRearDelayMs { get => _settings.upmixRearDelayMs; set => SetUpmixValue(() => _settings.upmixRearDelayMs = value, _settings.upmixRearDelayMs != value); }
     public int UpmixRearHighcutHz { get => _settings.upmixRearHighcutHz; set => SetUpmixValue(() => _settings.upmixRearHighcutHz = value, _settings.upmixRearHighcutHz != value); }
+
+    // tone: kept out of the presets, so changing it leaves the mode alone; applies live
+    public double BassDb { get => _settings.upmixBassDb; set => SetTone(() => _settings.upmixBassDb = value, _settings.upmixBassDb != value); }
+    public double TrebleDb { get => _settings.upmixTrebleDb; set => SetTone(() => _settings.upmixTrebleDb = value, _settings.upmixTrebleDb != value); }
+
+    private void SetTone(Action assign, bool changed)
+    {
+        if (!changed) return;
+        assign();
+        _settings.Save();
+        PushUpmix();
+        Raise(nameof(UpmixSettings));
+    }
 
     /// Moving a setting turns a preset into Custom (the Mac does the same).
     private void SetUpmixValue(Action assign, bool changed)
@@ -89,6 +104,7 @@ public sealed partial class PlayerModel
             bass_db = (float)_settings.upmixBassDb,
             rear_delay_ms = (float)_settings.upmixRearDelayMs,
             rear_highcut_hz = _settings.upmixRearHighcutHz,
+            treble_db = (float)_settings.upmixTrebleDb,
         };
         Native.pc_player_set_upmix(_player, ref u);
     }

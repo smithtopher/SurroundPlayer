@@ -77,6 +77,7 @@ struct SettingsView: View {
             } header: { Text("Surround") }
 
             upmixSection
+            toneSection
 
             Section {
                 Toggle("Show visualiser for music", isOn: $model.visualizerEnabled)
@@ -137,7 +138,6 @@ struct SettingsView: View {
                             Text("Copy (main speakers keep it)").tag(false)
                             Text("Move (small main speakers)").tag(true)
                         }
-                        slider("Bass boost", up(\.bassDb), 0...12, step: 0.5) { $0 < 0.25 ? "Off" : String(format: "+%.1f dB", $0) }
                         slider("Rear delay", up(\.rearDelayMs), 0...30, step: 1) { $0 < 0.5 ? "Off" : String(format: "%.0f ms", $0) }
                         Picker("Rear high-cut", selection: up(\.rearHighcutHz)) {
                             Text("Off").tag(0)
@@ -155,6 +155,24 @@ struct SettingsView: View {
                 note("Changes apply while playing. U turns upmix on and off. The output badge shows UPMIX while it is active.")
             }
         } header: { Text("Stereo Upmix") }
+    }
+
+    /// Tone: bass and treble boost for everything decoded (not part of the upmix presets).
+    private var toneSection: some View {
+        Section {
+            slider("Bass boost (100 Hz)", up(\.bassDb, custom: false), 0...12, step: 0.5) {
+                $0 < 0.25 ? "Off" : String(format: "+%.1f dB", $0)
+            }
+            slider("Treble boost (6 kHz)", up(\.trebleDb, custom: false), 0...12, step: 0.5) {
+                $0 < 0.25 ? "Off" : String(format: "+%.1f dB", $0)
+            }
+            note("""
+            Turn both up for listening at low volume: quiet sound loses bass first, and treble too, to the ear \
+            (the Fletcher-Munson curves). Works on everything the player decodes: stereo, upmixed stereo and \
+            native 5.1/7.1, whatever the output. Tracks passed through untouched as Dolby Digital or DTS can't be \
+            changed; turn pass-through off to apply it to them too. Changes apply while playing.
+            """)
+        } header: { Text("Tone") }
     }
 
     /// A setting's binding; moving it turns a preset into Custom.

@@ -109,6 +109,7 @@ internal static unsafe class Native
         public int crossover_hz, lfe_move;
         public float bass_db, rear_delay_ms;
         public int rear_highcut_hz;
+        public float treble_db;
     }
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] public static extern void pc_player_set_upmix(IntPtr p, ref PCUpmix u);
 

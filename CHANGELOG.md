@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.4.0] — 2026-11-23 (Windows; the Mac code is updated but not yet built)
+
+### Added
+- **Tone: bass and treble boost** (Settings ▸ Tone), for everything the player decodes:
+  stereo, upmixed stereo and native 5.1/7.1, over any output (Dolby Digital, DTS,
+  multichannel PCM or stereo PCM). Bass is a 100 Hz shelf, treble a 6 kHz shelf, 0 to
+  +12 dB each. Turning both up gives a loudness curve for listening at low volume. Changes
+  apply while playing and fade in over a fraction of a second, so there's no click. Tracks
+  passed through untouched as Dolby Digital or DTS can't be changed; turn pass-through off
+  to apply tone to them too. With both at Off the sound is bit-for-bit as before.
+
+### Changed
+- The bass boost moved out of Stereo Upmix ▸ Advanced into Tone, and it's no longer part of
+  the upmix presets: changing the mode keeps your tone settings, and moving them no longer turns
+  the mode into Custom. (Wide used to set the bass boost to +3 dB; it stays wherever you put it.)
+
 ## [1.3.4] — 2026-11-22 (Windows)
 
 ### Fixed

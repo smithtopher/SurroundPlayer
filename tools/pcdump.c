@@ -92,7 +92,8 @@ int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "usage: pcdump <media> <out> [--pcm] [--dts] [--stereo] [--mc-pcm] [--track N]\n"
                         "         [--upmix] [--upmix-set k=v,...]  (stereo upmix; keys: surround center width lfe\n"
-                        "          xover move bass delay highcut video, see PCUpmix in playercore.h)\n"
+                        "          xover move bass treble delay highcut video, see PCUpmix in playercore.h; bass and treble\n"
+                        "          also apply with the upmix off: --no-upmix)\n"
                         "       pcdump devices\n"
                         "       pcdump watch [--seconds N]\n"
                         "       pcdump play <media> [--device UID] [--pcm] [--dts] [--stereo] [--mc-pcm] [--track N] [--seconds N] [--debug]\n"
@@ -119,6 +120,8 @@ int main(int argc, char **argv) {
                    .crossover_hz = 100, .lfe_move = 0, .bass_db = 0, .rear_delay_ms = 10, .rear_highcut_hz = 7000 };
     const char *sub_file = NULL;
     const char *then_media = NULL;   // gapless: continue into this file
+    int no_upmix = 0;                // --no-upmix: the --upmix-set values (tone) with the upmix off
+    int tone_toggle_ms = 0;          // test: switch bass/treble between the set values and flat this often
     for (int i = 3; i < argc; i++) {
         if (!strcmp(argv[i], "--pcm")) cfg.bitstream_enabled = 0;
         else if (!strcmp(argv[i], "--dts")) cfg.bitstream_codec = PC_CODEC_DTS;
@@ -132,6 +135,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--sub-file") && i + 1 < argc) sub_file = argv[++i];
         else if (!strcmp(argv[i], "--then") && i + 1 < argc) then_media = argv[++i];
         else if (!strcmp(argv[i], "--upmix")) up.enabled = 1;
+        else if (!strcmp(argv[i], "--no-upmix")) no_upmix = 1;
+        else if (!strcmp(argv[i], "--tone-toggle-ms") && i + 1 < argc) tone_toggle_ms = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--upmix-set") && i + 1 < argc) {
             up.enabled = 1;
             char buf[512];
@@ -148,6 +153,7 @@ int main(int argc, char **argv) {
                 else if (!strcmp(kv, "xover")) up.crossover_hz = (int)v;
                 else if (!strcmp(kv, "move")) up.lfe_move = (int)v;
                 else if (!strcmp(kv, "bass")) up.bass_db = (float)v;
+                else if (!strcmp(kv, "treble")) up.treble_db = (float)v;
                 else if (!strcmp(kv, "delay")) up.rear_delay_ms = (float)v;
                 else if (!strcmp(kv, "highcut")) up.rear_highcut_hz = (int)v;
                 else if (!strcmp(kv, "video")) up.include_video = (int)v;
@@ -155,6 +161,7 @@ int main(int argc, char **argv) {
             }
         }
     }
+    if (no_upmix) up.enabled = 0;
     int frames = 0;
     PCPlayer *p = pc_player_create();
     pc_player_set_callbacks(p, on_frame, on_event, &frames);
@@ -195,9 +202,20 @@ int main(int argc, char **argv) {
     int64_t start = pc_now_ns(), next_report = start + 1000000000LL;
     int is_open = 1;
     double resume_at = 0;
+    PCUpmix tone_on = up;
+    int tone_flat = 0, toggles = 0;
+    int64_t next_toggle = start + (int64_t)tone_toggle_ms * 1000000;
     while (!atomic_load(&done)) {
-        pc_sleep_us(20000);
+        pc_sleep_us(tone_toggle_ms > 0 && tone_toggle_ms < 20 ? tone_toggle_ms * 1000 : 20000);
         int64_t now = pc_now_ns();
+        if (tone_toggle_ms > 0 && now >= next_toggle) {
+            tone_flat = !tone_flat;
+            PCUpmix u = tone_on;
+            if (tone_flat) u.bass_db = u.treble_db = 0;
+            pc_player_set_upmix(p, &u);
+            toggles++;
+            next_toggle = now + (int64_t)tone_toggle_ms * 1000000;
+        }
         if (atomic_exchange(&next_started, 0)) {
             PCInfo ni;
             pc_player_get_info(p, &ni);
@@ -252,6 +270,7 @@ int main(int argc, char **argv) {
     if (!is_open) { pc_player_destroy(p); return 3; }
     pc_player_get_info(p, &info);
     printf("video: %s, frames: %d\n", info.video, frames);
+    if (tone_toggle_ms > 0) printf("tone toggles: %d\n", toggles);
     pc_player_close(p);
     pc_player_destroy(p);
     return 0;

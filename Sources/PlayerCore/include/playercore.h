@@ -191,9 +191,13 @@ typedef struct {
     float lfe_db;           // subwoofer (LFE) level, -40..+6 dB; -40 = no LFE
     int crossover_hz;       // 40..250: bass below this goes to the LFE channel
     int lfe_move;           // 0: copy bass to LFE (mains keep it), 1: move it (small speakers)
-    float bass_db;          // 0..12 dB low-shelf bass boost (100 Hz)
+    float bass_db;          // 0..12 dB low-shelf bass boost (100 Hz); see treble_db
     float rear_delay_ms;    // 0..30: rears slightly late keeps sounds anchored at the front
     int rear_highcut_hz;    // 0 = off, else 2000..20000: rolls treble off the rears
+    float treble_db;        // 0..12 dB high-shelf treble boost (6 kHz); with bass_db, a loudness
+                            // curve for low volume. Tone (bass_db + treble_db) also applies to
+                            // audio that isn't upmixed: native multichannel and stereo, whenever
+                            // it's decoded (not passthrough), live, with the upmix on or off.
 } PCUpmix;
 
 PC_API void pc_player_set_upmix(PCPlayer *p, const PCUpmix *u);
