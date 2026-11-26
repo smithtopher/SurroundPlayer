@@ -7,6 +7,10 @@ to arrive compressed. The approach is modelled on Kodi's WASAPI-exclusive passth
 
 Download pre-compiled releases [here](https://github.com/smithtopher/SurroundPlayer/releases).
 
+📖 **[User manual (PDF)](docs/Surround_Player_Manual.pdf)**: overview, installation, TV/amp setup, and how to use
+every feature, with screenshots. Its source is [`docs/manual/manual.html`](docs/manual/manual.html); re-export it with
+Edge (full paths): `msedge --headless --no-pdf-header-footer --print-to-pdf=<repo>\docs\Surround_Player_Manual.pdf file:///<repo>/docs/manual/manual.html`.
+
 Both apps share one C engine (`Sources/PlayerCore`, FFmpeg-based) with a native back-end
 and front-end per OS:
 

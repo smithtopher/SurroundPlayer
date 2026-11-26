@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Surround Player — User Manual</title>
+<style>
+  @page { size: A4; margin: 16mm 16mm 18mm 16mm; }
+  @page :first { margin: 0; }
+  :root {
+    --ink: #1b2130; --muted: #5b6475; --line: #d9dde5; --soft: #f3f5f9;
+    --blue: #1f6fd6; --blue-l: #e6f0fd; --teal: #0f7f6d; --teal-l: #e0f3ef;
+    --amber: #a86400; --amber-l: #fcf0dc; --rose: #b42d4b; --rose-l: #fbe6eb;
+    --dark: #14181f;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { font-family: "Segoe UI", -apple-system, "Helvetica Neue", Arial, sans-serif; color: var(--ink);
+         font-size: 10.3pt; line-height: 1.5; margin: 0; background: #fff; }
+  h1 { font-size: 30pt; margin: 0; letter-spacing: -0.5px; line-height: 1.1; }
+  h2 { font-size: 17pt; margin: 0 0 10px; padding-bottom: 5px; border-bottom: 2.5px solid var(--blue);
+       break-after: avoid; }
+  h2 .n { color: var(--blue); margin-right: 8px; }
+  h3 { font-size: 12pt; margin: 16px 0 4px; break-after: avoid; }
+  p { margin: 5px 0 8px; }
+  code, kbd { font-family: "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace; font-size: 8.9pt; }
+  code { background: var(--soft); padding: 0 3px; border-radius: 3px; }
+  kbd { display: inline-block; border: 1px solid #b9c0cc; border-bottom-width: 2px; border-radius: 4px;
+        padding: 0 5px; background: #fafbfc; line-height: 1.45; white-space: nowrap; }
+  .chapter { break-before: page; }
+  .lead { font-size: 11.5pt; color: var(--muted); }
+  .box { padding: 7px 11px; margin: 10px 0; border-radius: 0 5px 5px 0; break-inside: avoid; }
+  .tip  { border-left: 4px solid var(--teal); background: var(--teal-l); }
+  .note { border-left: 4px solid var(--blue); background: var(--blue-l); }
+  .warn { border-left: 4px solid var(--rose); background: var(--rose-l); }
+  .box b.h { display: block; font-size: 9pt; letter-spacing: .6px; text-transform: uppercase; margin-bottom: 1px; }
+  .tip b.h { color: var(--teal); } .note b.h { color: var(--blue); } .warn b.h { color: var(--rose); }
+  figure { margin: 10px 0 14px; break-inside: avoid; }
+  figure img { width: 100%; display: block; border-radius: 6px; border: 1px solid #c9ced8;
+               box-shadow: 0 2px 6px rgba(20,30,50,.12); }
+  figure.narrow img { width: 72%; margin: 0 auto; }
+  figure.half img { width: 58%; margin: 0 auto; }
+  figure.w80 img { width: 60%; margin: 0 auto; }
+  figure.w45 img { width: 46%; margin: 0 auto; }
+  figcaption { font-size: 8.8pt; color: var(--muted); text-align: center; margin-top: 5px; }
+  table { border-collapse: collapse; width: 100%; font-size: 9.4pt; margin: 6px 0 12px; break-inside: auto; }
+  tr { break-inside: avoid; }
+  th, td { border: 1px solid var(--line); padding: 4px 7px; text-align: left; vertical-align: top; }
+  th { background: var(--soft); font-weight: 600; }
+  td.k { white-space: nowrap; width: 1%; }
+  ul, ol { margin: 4px 0 8px; padding-left: 20px; } li { margin: 2px 0; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .steps { counter-reset: s; list-style: none; padding-left: 0; }
+  .steps > li { counter-increment: s; position: relative; padding-left: 30px; margin: 7px 0; }
+  .steps > li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 21px; height: 21px;
+       border-radius: 50%; background: var(--blue); color: #fff; font-weight: 700; font-size: 9pt;
+       display: flex; align-items: center; justify-content: center; }
+  .callouts { columns: 2; column-gap: 22px; font-size: 9.6pt; padding-left: 0; list-style: none; }
+  .callouts li { break-inside: avoid; margin: 3px 0 6px; padding-left: 28px; position: relative; }
+  .callouts li span.c { position: absolute; left: 0; top: 1px; }
+  .c { display: inline-flex; width: 19px; height: 19px; border-radius: 50%; background: #f2a516; color: #1b2130;
+       font-weight: 800; font-size: 8.6pt; align-items: center; justify-content: center; }
+  .shot { position: relative; }
+  .shot .c { position: absolute; transform: translate(-50%, -50%); box-shadow: 0 0 0 1.5px #fff; width: 15px; height: 15px; font-size: 7.4pt; }
+  .badge { display: inline-block; background: #4cc2ff; color: #0b1a2a; font-weight: 700; font-size: 8.4pt;
+           padding: 0 6px; border-radius: 4px; letter-spacing: .3px; }
+  .badge.grey { background: #3a3d44; color: #fff; }
+
+  /* cover */
+  .cover { height: 296mm; display: flex; flex-direction: column; justify-content: space-between;
+           background: linear-gradient(160deg, #10151f 0%, #172540 55%, #1f3c6e 100%); color: #fff;
+           margin: 0; padding: 26mm 22mm 20mm; overflow: hidden; }
+  .cover .kicker { letter-spacing: 3px; text-transform: uppercase; font-size: 9.5pt; color: #8fb7ff; }
+  .cover h1 { font-size: 44pt; margin: 8px 0 6px; }
+  .cover .sub { font-size: 15pt; color: #c9d6ee; max-width: 150mm; }
+  .cover img { width: 100%; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.45); border: 1px solid #2f3b52; }
+  .cover .meta { font-size: 9.5pt; color: #9fb0cc; display: flex; justify-content: space-between; }
+  .toc { list-style: none; padding: 0; font-size: 11pt; }
+  .toc li { display: flex; border-bottom: 1px dotted var(--line); padding: 5px 0; }
+  .toc li span.t { flex: 1; } .toc li span.n { color: var(--blue); font-weight: 700; width: 28px; }
+  .toc li span.d { color: var(--muted); font-size: 9.4pt; }
+  svg { width: 100%; height: auto; display: block; }
+  svg text { font-family: "Segoe UI", Arial, sans-serif; }
+</style>
+</head>
+<body>
+
+<!-- ============================ COVER ============================ -->
+<section class="cover">
+  <div>
+    <div class="kicker">User Manual · Version 1.4</div>
+    <h1>Surround Player</h1>
+    <div class="sub">A music and video player that sends real surround sound to your TV and amplifier as a
+      Dolby&nbsp;Digital or DTS bitstream, for Windows&nbsp;11 and macOS.</div>
+  </div>
+  <img src="images/visualiser.png" alt="Surround Player playing an album with the visualiser on">
+  <div class="meta"><span>Windows 11 · macOS 14+</span><span>github.com/smithtopher/SurroundPlayer</span></div>
+</section>
+
+<!-- ============================ CONTENTS ============================ -->
+<section class="chapter">
+  <h2>Contents</h2>
+  <ul class="toc">
+    <li><span class="n">1</span><span class="t">Overview</span><span class="d">What the player does and why</span></li>
+    <li><span class="n">2</span><span class="t">Installation</span><span class="d">Windows, macOS, TV and amp setup</span></li>
+    <li><span class="n">3</span><span class="t">The main window</span><span class="d">A tour of the controls</span></li>
+    <li><span class="n">4</span><span class="t">Playing music</span><span class="d">Adding files, the playlist, search, playlists, cue sheets</span></li>
+    <li><span class="n">5</span><span class="t">Watching video</span><span class="d">Video, subtitles, audio tracks, full screen</span></li>
+    <li><span class="n">6</span><span class="t">Audio output</span><span class="d">Choosing the device, reading the output badge</span></li>
+    <li><span class="n">7</span><span class="t">Settings</span><span class="d">Surround output, upmix, tone, visualiser, sync</span></li>
+    <li><span class="n">8</span><span class="t">The visualiser</span><span class="d">Presets and controls</span></li>
+    <li><span class="n">9</span><span class="t">Keyboard shortcuts</span><span class="d">Every key on one page</span></li>
+    <li><span class="n">10</span><span class="t">Troubleshooting</span><span class="d">No sound, noise, DTS, sync and more</span></li>
+  </ul>
+
+  <div class="box note" style="margin-top:24px"><b class="h">About this manual</b>
+    The screenshots were taken from the Windows app; the macOS app looks and behaves the same way, with
+    <kbd>⌘</kbd> in place of <kbd>Ctrl</kbd> and a menu bar instead of some toolbar buttons. Where the two
+    differ, the text says so.</div>
+</section>
+
+<!-- ============================ 1 OVERVIEW ============================ -->
+<section class="chapter">
+  <h2><span class="n">1</span>Overview</h2>
+  <p class="lead">Surround Player plays your music and films and makes sure that surround sound actually
+    reaches your surround speakers, even when the amplifier is connected to the TV by an optical cable.</p>
+
+  <h3>The problem it solves</h3>
+  <p>Many living rooms are wired like this: the computer goes into the TV over HDMI, and the TV passes its
+    sound to an amplifier over an optical (S/PDIF) cable. An optical cable can only carry <b>two channels of
+    uncompressed sound</b>. Surround (5.1) can only get through it when it is <b>compressed</b> as Dolby Digital
+    (AC3) or DTS. Most players send plain PCM, so the amp only ever receives stereo.</p>
+  <p>Surround Player converts whatever you play into a Dolby Digital or DTS <i>bitstream</i> and sends it to the
+    TV untouched, the same way Kodi and Blu-ray players do. The TV forwards it to the amp, and the amp decodes it into
+    full 5.1.</p>
+
+  <figure>
+    <svg viewBox="0 0 760 125" xmlns="http://www.w3.org/2000/svg">
+      <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1f6fd6"/></marker></defs>
+      <g font-size="13">
+        <rect x="8" y="40" width="150" height="70" rx="10" fill="#e6f0fd" stroke="#1f6fd6"/>
+        <text x="83" y="70" text-anchor="middle" font-weight="700">Computer</text>
+        <text x="83" y="90" text-anchor="middle" font-size="11" fill="#5b6475">Surround Player</text>
+        <rect x="300" y="40" width="150" height="70" rx="10" fill="#f3f5f9" stroke="#8a93a3"/>
+        <text x="375" y="70" text-anchor="middle" font-weight="700">TV</text>
+        <text x="375" y="90" text-anchor="middle" font-size="11" fill="#5b6475">audio out: Pass-through</text>
+        <rect x="592" y="40" width="160" height="70" rx="10" fill="#e0f3ef" stroke="#0f7f6d"/>
+        <text x="672" y="70" text-anchor="middle" font-weight="700">Amplifier</text>
+        <text x="672" y="90" text-anchor="middle" font-size="11" fill="#5b6475">decodes to 5.1 speakers</text>
+        <line x1="160" y1="75" x2="296" y2="75" stroke="#1f6fd6" stroke-width="2.5" marker-end="url(#a)"/>
+        <text x="228" y="64" text-anchor="middle" font-size="11" font-weight="700">HDMI</text>
+        <text x="228" y="98" text-anchor="middle" font-size="10" fill="#5b6475">Dolby Digital / DTS</text>
+        <line x1="452" y1="75" x2="588" y2="75" stroke="#1f6fd6" stroke-width="2.5" marker-end="url(#a)"/>
+        <text x="520" y="64" text-anchor="middle" font-size="11" font-weight="700">Optical</text>
+        <text x="520" y="98" text-anchor="middle" font-size="10" fill="#5b6475">passed through as-is</text>
+      </g>
+    </svg>
+    <figcaption>Figure 1 — The connection Surround Player was designed for. An AV receiver connected straight to the computer by HDMI works too.</figcaption>
+  </figure>
+
+  <h3 style="margin-top:6px">What it can do</h3>
+  <div class="cols">
+    <ul>
+      <li><b>Dolby Digital or DTS output</b> from any surround source (AAC, FLAC, E-AC3, TrueHD, DTS-HD…), up to 640 kb/s AC3 or 1509 kb/s DTS.</li>
+      <li><b>Bit-perfect passthrough</b> of tracks that are already Dolby Digital or DTS.</li>
+      <li><b>Multichannel PCM</b> for an AV receiver on HDMI, with no conversion at all.</li>
+      <li><b>Stereo upmix</b> turns stereo music and TV into 5.1, with presets and fine controls.</li>
+      <li><b>Bass and treble boost</b> for low-volume listening.</li>
+    </ul>
+    <ul>
+      <li><b>Video</b> with hardware decoding, kept in sync with the audio; adjustable delay for slow amps.</li>
+      <li><b>Subtitles</b>: embedded text and picture subtitles, plus <code>.srt</code>, <code>.ass</code> and <code>.vtt</code> files.</li>
+      <li><b>Gapless albums</b>, <b>cue sheets</b>, <b>cover art</b> and <b>M3U playlists</b>.</li>
+      <li>A <b>MilkDrop-style visualiser</b> with 13 presets.</li>
+      <li>A searchable playlist that is remembered between sessions.</li>
+    </ul>
+  </div>
+
+  <h3>Feature differences between the apps</h3>
+  <table>
+    <tr><th>Feature</th><th style="width:15%">Windows</th><th style="width:22%">macOS</th></tr>
+    <tr><td>Dolby Digital / DTS transcode and passthrough</td><td>✓</td><td>✓</td></tr>
+    <tr><td>Multichannel PCM, stereo upmix</td><td>✓</td><td>✓</td></tr>
+    <tr><td>Bass and treble boost</td><td>✓ (1.4)</td><td>— (coming)</td></tr>
+    <tr><td>Audio track menu, cover art, folder art, cue sheets, Open Recent, visualiser</td><td>✓</td><td>✓</td></tr>
+    <tr><td>Playlist remembered at launch; <code>.m3u8</code> playlists; subtitles</td><td>✓</td><td>✓</td></tr>
+    <tr><td>Gapless playback between separate album files</td><td>✓</td><td>— (cue sheet tracks are gapless)</td></tr>
+  </table>
+</section>
+
+<!-- ============================ 2 INSTALLATION ============================ -->
+<section class="chapter">
+  <h2><span class="n">2</span>Installation</h2>
+  <p>Ready-made downloads are on the project's <b>Releases</b> page:
+    <code>github.com/smithtopher/SurroundPlayer/releases</code>. Nothing else needs to be installed.</p>
+
+  <h3>Windows 11</h3>
+  <ol class="steps">
+    <li>Download <code>SurroundPlayer-&lt;version&gt;-windows-x64.exe</code> from the latest release (about 70&nbsp;MB).
+      It is a single self-contained program: .NET, the Windows App SDK and the audio engine are all inside it.</li>
+    <li>Put it anywhere you like, for example in a <code>Programs</code> folder or on the desktop, and double-click it.</li>
+    <li>The program isn't code-signed, so Windows SmartScreen asks the first time:
+      click <b>More info</b>, then <b>Run anyway</b>.</li>
+    <li>The very first start takes about 10 seconds while the program unpacks itself to
+      <code>%TEMP%\.net</code>. Later starts take about a second.</li>
+  </ol>
+  <div class="box tip"><b class="h">Tip</b>To open music by double-clicking it in Explorer, right-click a file →
+    <b>Open with</b> → <b>Choose another app</b> → <b>Choose an app on your PC</b>, and pick the
+    Surround Player <code>.exe</code>. You can also drag files onto the program's icon.</div>
+  <p>Settings, the saved playlist and the recent-files list are kept in <code>%LOCALAPPDATA%\SurroundPlayer</code>.
+    To update, replace the <code>.exe</code> with the new version; your settings are kept.</p>
+
+  <h3>macOS (14 Sonoma or later)</h3>
+  <ol class="steps">
+    <li>Download the zip that matches your Mac: <code>…-apple-silicon.zip</code> (M1 and later),
+      <code>…-intel.zip</code>, or <code>…-universal.zip</code> (runs on both).</li>
+    <li>Unzip it and drag <b>Surround Player.app</b> into <b>Applications</b>.</li>
+    <li>The app isn't notarized, so the first time <b>right-click it → Open</b>, then confirm with <b>Open</b>.
+      If macOS still refuses, run this in Terminal:<br>
+      <code>xattr -dr com.apple.quarantine "/Applications/Surround Player.app"</code></li>
+  </ol>
+  <p>Settings are stored in the <code>local.surroundplayer</code> preferences, and the playlist in
+    <code>~/Library/Application Support/SurroundPlayer</code>.</p>
+
+  <h3>Set up the TV and amplifier</h3>
+  <ol class="steps">
+    <li>Connect the computer to the TV with HDMI, and the TV to the amp with an optical cable (or HDMI ARC).</li>
+    <li>In the TV's sound menu, set the <b>digital audio output</b> (sometimes "optical output format") to
+      <b>Pass-through</b>, <b>Auto</b> or <b>Bitstream</b>, <i>not</i> PCM. With PCM selected, the TV converts everything to stereo.</li>
+    <li>Set the amp's input to the optical (or ARC) input the TV is connected to.</li>
+    <li>Start Surround Player, choose the TV in the output menu (see <a href="#ch6">chapter 6</a>) and play something with
+      5.1 sound. The amp's display should show <b>Dolby Digital</b> (or <b>DTS</b>).</li>
+  </ol>
+  <div class="box warn"><b class="h">Important</b>Bitstreams only go to HDMI, DisplayPort and other digital outputs.
+    The player never sends them to speakers or headphones, where they would play as loud noise; there it plays normal PCM instead.</div>
+</section>
+
+<!-- ============================ 3 MAIN WINDOW ============================ -->
+<section class="chapter">
+  <h2><span class="n">3</span>The main window</h2>
+  <p>The window has three parts: the <b>toolbar</b> at the top, the <b>stage</b> on the left (artwork, video or
+    the visualiser, with the transport controls beneath it), and the <b>playlist</b> on the right.</p>
+
+  <figure>
+    <div class="shot">
+      <img src="images/main-window.png" alt="Main window">
+      <span class="c" style="left:3.2%;top:13.4%">1</span>
+      <span class="c" style="left:11.6%;top:13.4%">2</span>
+      <span class="c" style="left:17.2%;top:13.4%">3</span>
+      <span class="c" style="left:40.6%;top:13.4%">4</span>
+      <span class="c" style="left:79.6%;top:13.4%">5</span>
+      <span class="c" style="left:84.7%;top:13.4%">6</span>
+      <span class="c" style="left:89.8%;top:13.4%">7</span>
+      <span class="c" style="left:94.9%;top:13.4%">8</span>
+      <span class="c" style="left:31.8%;top:44%">9</span>
+      <span class="c" style="left:10%;top:84.3%">10</span>
+      <span class="c" style="left:1.7%;top:89.6%">11</span>
+      <span class="c" style="left:24.4%;top:90.6%">12</span>
+      <span class="c" style="left:46.8%;top:90.6%">13</span>
+      <span class="c" style="left:59.4%;top:90.6%">14</span>
+      <span class="c" style="left:64.9%;top:15.3%">15</span>
+      <span class="c" style="left:64.9%;top:24.2%">16</span>
+      <span class="c" style="left:81.6%;top:93.4%">17</span>
+    </div>
+    <figcaption>Figure 2 — The main window playing an album.</figcaption>
+  </figure>
+
+  <ul class="callouts">
+    <li><span class="c">1</span><b>Open</b>: add files to the playlist (<kbd>Ctrl</kbd>+<kbd>O</kbd>).</li>
+    <li><span class="c">2</span><b>Add folders</b>: folders are scanned for media, including subfolders (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>).</li>
+    <li><span class="c">3</span><b>Open Recent</b>: the last 10 files, folders and cue sheets you opened (<kbd>Ctrl</kbd>+<kbd>R</kbd>).</li>
+    <li><span class="c">4</span><b>Output device</b>: where the sound goes. See chapter 6.</li>
+    <li><span class="c">5</span><b>Visualiser</b> on/off (<kbd>V</kbd>). Highlighted while on.</li>
+    <li><span class="c">6</span><b>Full screen</b> (<kbd>F</kbd> or double-click the picture).</li>
+    <li><span class="c">7</span><b>Show or hide the playlist</b>.</li>
+    <li><span class="c">8</span><b>Settings</b> (<kbd>Ctrl</kbd>+<kbd>,</kbd>).</li>
+    <li><span class="c">9</span><b>Stage</b>: cover art, video or the visualiser. Drop files here.</li>
+    <li><span class="c">10</span><b>Position</b>: click or drag the bar to seek.</li>
+    <li><span class="c">11</span><b>Now playing</b>: title and artist.</li>
+    <li><span class="c">12</span><b>Previous / Play-Pause / Next</b>.</li>
+    <li><span class="c">13</span><b>Source format</b>: bit depth and sample rate, or bitrate for MP3/AAC.</li>
+    <li><span class="c">14</span><b>Output badge</b>: what is being sent (PCM, DOLBY DIGITAL, DTS…). Click it for details.</li>
+    <li><span class="c">15</span><b>Filter</b>: search the playlist (<kbd>Ctrl</kbd>+<kbd>F</kbd>).</li>
+    <li><span class="c">16</span><b>Playlist</b>: the playing item has a speaker icon. Double-click to play.</li>
+    <li><span class="c">17</span><b>Load… / Save… / Clear</b>: playlist files and clearing.</li>
+  </ul>
+  <p>On macOS the same commands are also in the <b>File</b> and <b>Playback</b> menus.</p>
+</section>
+
+<!-- ============================ 4 MUSIC ============================ -->
+<section class="chapter">
+  <h2><span class="n">4</span>Playing music</h2>
+
+  <h3>Adding music</h3>
+  <ul>
+    <li><b>Drag and drop</b> files or whole folders onto the window or the playlist. Folders are scanned recursively.</li>
+    <li>Click <b>Open</b> for files or the <b>folder</b> button for folders.</li>
+    <li>Open files from Explorer or Finder with Surround Player, or pass them on the command line.</li>
+    <li><b>Open Recent</b> brings back anything you opened recently. Tracks that play automatically aren't added to it.</li>
+  </ul>
+  <p>New items are added to the end of the playlist. Double-click any item to play it. When a track ends, the next one starts.</p>
+
+  <h3>Searching the playlist</h3>
+  <p>Type in <b>Filter tracks</b> to show only matching items. The filter looks at file and folder names, and every
+    word must match: <code>pink wall</code> finds Pink&nbsp;Floyd's <i>The Wall</i>. Press <kbd>Enter</kbd> to play
+    the first match and <kbd>Esc</kbd> to clear the filter. While the filter box has focus, single-key shortcuts are
+    turned off so you can type freely.</p>
+
+  <h3>Playlists</h3>
+  <ul>
+    <li>The playlist is <b>saved automatically</b>. When you start the app again, it is restored with the last track selected
+      and the position remembered: press <kbd>Space</kbd> to carry on where you left off.</li>
+    <li><b>Save…</b> (<kbd>Ctrl</kbd>+<kbd>S</kbd>) writes the playlist as an <code>.m3u8</code> file with relative paths, so it
+      still works if you move the whole music folder.</li>
+    <li><b>Load…</b> (<kbd>Ctrl</kbd>+<kbd>L</kbd>) <i>replaces</i> the playlist with an <code>.m3u</code>/<code>.m3u8</code> file
+      and starts the first entry. Opening a playlist file with <b>Open</b> <i>adds</i> its entries instead.</li>
+    <li><b>Clear</b> empties the playlist.</li>
+  </ul>
+
+  <h3>Albums, cue sheets and gapless playback</h3>
+  <p>Some albums are ripped as one big file with a <code>.cue</code> sheet that marks where each track starts.
+    Add the <code>.cue</code> file (or its folder) and the playlist shows the individual tracks instead of the one
+    big file. Tracks of the same file always play without a gap.</p>
+  <p>On Windows, separate album files also play <b>gaplessly</b> when they have the same format, so live albums and
+    DJ mixes run on without a click or pause between tracks.</p>
+
+  <h3>Cover art</h3>
+  <p>When the visualiser is off and the file has no video, the stage shows the album cover. The player uses art
+    embedded in the file first. If there isn't any, it looks for a picture in the same folder: one named like the
+    file, then <code>cover</code>, <code>folder</code>, <code>front</code>, <code>album</code> or <code>albumart</code>
+    (<code>.jpg</code>, <code>.jpeg</code> or <code>.png</code>), then any picture whose name contains one of those words.</p>
+
+  <h3>Supported files</h3>
+  <p>Almost any audio or video format plays: FLAC, ALAC, WAV, AIFF, MP3, AAC/M4A, Ogg Vorbis, Opus, WMA, AC3, DTS, E-AC3,
+    TrueHD and more; video in MKV, MP4, MOV, AVI, TS and others with H.264, HEVC, MPEG-2, MPEG-4, VP9 or AV1.</p>
+</section>
+
+<!-- ============================ 5 VIDEO ============================ -->
+<section class="chapter">
+  <h2><span class="n">5</span>Watching video</h2>
+  <p>Video files play in the stage, decoded by your graphics card where possible. The picture is timed against
+    the sound coming out of the device, so lips stay in sync.</p>
+  <figure class="w80">
+    <img src="images/video.png" alt="A video playing">
+    <figcaption>Figure 3 — A film with a Dolby Digital 5.1 track, passed straight through to the amp.
+      The <b>CC</b> menu appears for files that have subtitles.</figcaption>
+  </figure>
+
+  <h3>Full screen</h3>
+  <p>Press <kbd>F</kbd> or double-click the picture. The toolbar and playlist are hidden and the controls float over
+    the picture; they and the mouse pointer fade out after 3 seconds without mouse movement. Move the mouse to bring
+    them back, and press <kbd>Esc</kbd> or <kbd>F</kbd> to leave full screen.</p>
+
+  <h3>Audio tracks</h3>
+  <p>When a file has more than one audio track (for example several languages, or a commentary), a track menu appears in
+    the controls bar. Press <kbd>A</kbd> to step through the tracks.</p>
+
+  <h3>Subtitles</h3>
+  <ul>
+    <li>Choose a subtitle track from the <b>CC</b> menu, or press <kbd>S</kbd> to go off → first track → next track… → off.</li>
+    <li>Embedded text subtitles (SubRip, ASS/SSA, WebVTT) and picture subtitles (Blu-ray PGS) are supported.</li>
+    <li><b>Subtitle files</b> next to the film are found automatically when they share its name:
+      <code>Movie.srt</code>, <code>Movie.en.srt</code>, <code>Movie.de.forced.ass</code>, and so on. Files in other text
+      encodings (such as Windows-1252) are converted for you.</li>
+    <li>The player remembers the language you last picked and chooses it automatically next time. Until you pick one, it
+      uses the track the file marks as default. Forced subtitles (for foreign-language scenes) are shown when nothing else is selected.</li>
+  </ul>
+
+  <h3>Lip sync</h3>
+  <p>An amplifier needs a moment to decode Dolby Digital, so the sound can arrive slightly after the picture.
+    If voices lag, raise <b>Settings → Sync → Audio latency</b> (see chapter 7) until they match.</p>
+</section>
+
+<!-- ============================ 6 OUTPUT ============================ -->
+<section class="chapter" id="ch6">
+  <h2><span class="n">6</span>Audio output</h2>
+
+  <h3>Choosing the output device</h3>
+  <p>Click the device button in the toolbar and pick where the sound should go. Devices that can take a Dolby Digital
+    bitstream are marked <b>• DD</b>. <b>System Default</b> follows the device chosen in Windows' (or macOS') sound
+    settings. <b>Refresh Devices</b> re-reads the list, for example after switching the TV on.</p>
+  <div class="cols" style="grid-template-columns: 1fr 1fr; align-items: center">
+  <figure><img src="images/device-menu.png" alt="Device menu"><figcaption>Figure 4 — The output menu. The TV is an HDMI device that accepts Dolby Digital.</figcaption></figure>
+    <p>The player takes <b>exclusive</b> control of the device while it plays a bitstream, so the sound isn't changed on the way
+    out. Other programs can't play through that device at the same time. If the TV is switched off or changes input, the player
+    notices and reconnects when the device comes back.</p>
+  </div>
+
+  <h3>Reading the output badge</h3>
+  <p>The badge at the right of the controls shows what is leaving the computer right now:</p>
+  <table>
+    <tr><th>Badge</th><th>Meaning</th></tr>
+    <tr><td class="k"><span class="badge grey">PCM</span></td><td>Normal uncompressed sound. Stereo sources play this way unless you turn on upmix or "Also encode stereo sources".</td></tr>
+    <tr><td class="k"><span class="badge">DOLBY DIGITAL</span></td><td>A Dolby Digital (AC3) bitstream, either passed through from the file or encoded by the player.</td></tr>
+    <tr><td class="k"><span class="badge">DTS</span></td><td>A DTS bitstream.</td></tr>
+    <tr><td class="k"><span class="badge">… · UPMIX</span></td><td>Stereo is being upmixed to 5.1 (chapter 7).</td></tr>
+  </table>
+  <p><b>Click the badge</b> for the full story: the source format, exactly what is sent to which device, and how the video is decoded.</p>
+  <figure class="w80">
+    <img src="images/output-details.png" alt="Output details popup">
+    <figcaption>Figure 5 — Output details: the file's Dolby Digital 5.1 track passes through bit-for-bit to the TV over HDMI,
+      and the H.264 video is decoded on the GPU (D3D11VA).</figcaption>
+  </figure>
+</section>
+
+<!-- ============================ 7 SETTINGS ============================ -->
+<section class="chapter">
+  <h2><span class="n">7</span>Settings</h2>
+  <p>Open Settings with the gear button or <kbd>Ctrl</kbd>+<kbd>,</kbd> (<kbd>⌘</kbd>+<kbd>,</kbd> on a Mac).
+    Changes take effect straight away, even while something is playing. Click <b>Done</b> to close the dialog.</p>
+
+  <div class="cols">
+    <figure><img src="images/settings-device.png" alt="Settings: device and surround">
+      <figcaption>Figure 6 — Audio device and surround output.</figcaption></figure>
+    <figure><img src="images/settings-surround.png" alt="Settings: passthrough options">
+      <figcaption>Figure 7 — Passthrough and stereo options.</figcaption></figure>
+  </div>
+
+  <h3>Audio Device</h3>
+  <p>The same choice as the toolbar menu, with each device's channel count. The line below tells you whether the device is a
+    digital output that can take Dolby Digital or DTS.</p>
+
+  <h3>Surround output</h3>
+  <table>
+    <tr><th style="width:34%">Choice</th><th>What happens</th><th style="width:24%">Use it when</th></tr>
+    <tr><td><b>Dolby Digital bitstream</b> (default)</td><td>Surround sound is encoded as Dolby Digital (AC3) and sent as a bitstream.
+      Files that already have Dolby Digital pass through untouched.</td><td>Your amp is on optical or ARC. Works with almost every amp.</td></tr>
+    <tr><td><b>DTS bitstream</b></td><td>Surround is encoded as DTS. Dolby Digital and DTS tracks pass through (for DTS-HD, the DTS core).</td>
+      <td>Your amp and TV handle DTS and you prefer it.</td></tr>
+    <tr><td><b>Multichannel PCM</b></td><td>Nothing is converted: 5.1 and 7.1 sources go out as uncompressed PCM in their own layout and sample rate.</td>
+      <td>An AV receiver is connected <i>directly</i> by HDMI.</td></tr>
+    <tr><td><b>Off (stereo PCM)</b></td><td>Everything plays as ordinary stereo.</td><td>Headphones, computer speakers.</td></tr>
+  </table>
+  <ul>
+    <li><b>Dolby Digital bitrate</b>: 384, 448 (DVD) or <b>640 kb/s</b> (Blu-ray, best). <b>DTS bitrate</b>: 1509 (full rate, best) or 754 kb/s.</li>
+    <li><b>Pass native … tracks through untouched</b>: leave it on, so Dolby Digital (and DTS) tracks reach the amp exactly as they are in the file.
+      Turn it off only if you want bass/treble boost applied to those tracks too, which needs them decoded and re-encoded.</li>
+    <li><b>Also encode stereo sources</b>: sends stereo as Dolby Digital 2.0 as well. Turn it on if your amp drops the first
+      second of sound when it switches between PCM and Dolby Digital. (Greyed out while upmix is on, as stereo is then encoded anyway.)</li>
+  </ul>
+</section>
+
+<section class="chapter">
+  <h3 style="margin-top:0">Stereo Upmix</h3>
+  <p>Most music and TV is stereo. Upmix spreads it over all your speakers: dialogue and vocals can move to the centre speaker,
+    room sound and reverb go to the rear speakers, and the bass is fed to the subwoofer. It works whenever the surround output is
+    Dolby Digital, DTS or Multichannel PCM. Turn it on and off with <kbd>U</kbd> (or the mode menu in Settings); the badge then reads
+    <span class="badge">DOLBY DIGITAL · UPMIX</span>.</p>
+  <div class="cols">
+    <figure><img src="images/settings-upmix.png" alt="Settings: stereo upmix">
+      <figcaption>Figure 8 — Stereo Upmix and Tone settings.</figcaption></figure>
+    <div>
+      <table>
+        <tr><th>Mode</th><th>Sound</th></tr>
+        <tr><td><b>Off</b></td><td>Stereo stays stereo.</td></tr>
+        <tr><td><b>Music</b></td><td>Gentle room sound in the rears; vocals stay between the front speakers.</td></tr>
+        <tr><td><b>Movies &amp; TV</b></td><td>Dialogue locked to the centre speaker, ambience behind you.</td></tr>
+        <tr><td><b>Wide</b></td><td>Bigger, more enveloping sound with stronger rears and a wider front.</td></tr>
+        <tr><td><b>Custom</b></td><td>Your own settings. Moving any slider switches to Custom, and your Custom settings are kept when you try a preset.</td></tr>
+      </table>
+    </div>
+  </div>
+  <p>With a mode chosen, these controls appear:</p>
+  <ul>
+    <li><b>Also for videos with stereo sound</b>: upmix the stereo soundtrack of films and TV recordings too (off by default).</li>
+    <li><b>Surround level</b>: how loud the rear speakers are.</li>
+    <li><b>Centre focus</b>: from <i>Phantom</i> (no centre speaker; the voice comes from between the front pair) to <i>Locked</i> (all of it in the centre).</li>
+    <li><b>Front width</b>: narrower or wider than the recording; the middle is <i>As recorded</i>.</li>
+    <li><b>Subwoofer (LFE)</b>: subwoofer level.</li>
+    <li><b>Advanced</b>: <i>Bass crossover</i> (the frequency below which bass goes to the subwoofer), <i>Bass to subwoofer</i>
+      (<i>Copy</i> keeps the bass in the main speakers too; <i>Move</i> is for small main speakers), <i>Rear delay</i> and
+      <i>Rear high-cut</i> (soften the rears so they sound like the room rather than extra speakers).</li>
+  </ul>
+
+  <h3>Tone <span style="font-weight:400;color:var(--muted);font-size:9.5pt">(Windows 1.4; coming to macOS)</span></h3>
+  <figure class="half"><img src="images/settings-tone.png" alt="Settings: tone">
+    <figcaption>Figure 9 — Bass and treble boost.</figcaption></figure>
+  <p><b>Bass boost</b> (100&nbsp;Hz) and <b>Treble boost</b> (6&nbsp;kHz) each go up to +12&nbsp;dB. Turn both up when listening
+    quietly: at low volume the ear loses bass first, and treble too. A limiter stops the boost from distorting. The boost works on
+    everything the player decodes: stereo, upmixed stereo and native 5.1/7.1. It can't change tracks that pass through untouched
+    as Dolby Digital or DTS, unless you turn passthrough off.</p>
+
+  <h3>Visualiser and Sync</h3>
+  <figure class="half"><img src="images/settings-sync.png" alt="Settings: visualiser and sync">
+    <figcaption>Figure 10 — Visualiser switch, audio latency and the version number.</figcaption></figure>
+  <ul>
+    <li><b>Show visualiser for music</b>: the same as <kbd>V</kbd>; see chapter 8.</li>
+    <li><b>Audio latency</b> (−500 to +1000 ms): if sound arrives after the picture, raise this to delay the video by the same amount.
+      Values between about 50 and 150 ms are typical for an amp decoding Dolby Digital.</li>
+    <li>The version you are running is shown at the bottom of the dialog.</li>
+  </ul>
+</section>
+
+<!-- ============================ 8 VISUALISER ============================ -->
+<section class="chapter">
+  <h2><span class="n">8</span>The visualiser</h2>
+  <p>The visualiser draws flowing, beat-reactive graphics in the style of the classic MilkDrop visualiser. It listens to
+    the sound actually leaving the speakers, so it stays in time even while a Dolby Digital bitstream is playing.</p>
+  <figure>
+    <img src="images/visualiser.png" alt="The visualiser">
+    <figcaption>Figure 11 — The visualiser playing a stereo album that is upmixed to Dolby Digital 5.1.</figcaption>
+  </figure>
+  <ul>
+    <li><kbd>V</kbd> (or the visualiser button in the toolbar) turns it on and off. It is off at first; the setting is remembered.</li>
+    <li>When it is on, it also replaces the picture of video files. The video keeps playing in the background, so switching back is instant.</li>
+    <li><kbd>]</kbd> / <kbd>[</kbd> (or <kbd>N</kbd> / <kbd>P</kbd> on Windows) go to the next or previous of the 13 presets.</li>
+    <li>Presets change by themselves on a strong beat or after 40 seconds, blending smoothly into each other. Press <kbd>L</kbd>
+      to <b>lock</b> the current preset, and <kbd>L</kbd> again to unlock.</li>
+    <li>Press <kbd>F</kbd> for full-screen visuals.</li>
+  </ul>
+  <div class="box tip"><b class="h">Note</b>The presets are original to Surround Player. It does not load MilkDrop <code>.milk</code> preset files.</div>
+</section>
+
+<!-- ============================ 9 KEYS ============================ -->
+<section class="chapter">
+  <h2><span class="n">9</span>Keyboard shortcuts</h2>
+  <p>Single keys work in the player window but not while you are typing in the filter box.</p>
+  <table>
+    <tr><th style="width:26%">Windows</th><th style="width:26%">macOS</th><th>Action</th></tr>
+    <tr><td><kbd>Space</kbd></td><td><kbd>Space</kbd></td><td>Play / pause</td></tr>
+    <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td><kbd>←</kbd> <kbd>→</kbd></td><td>Back / forward 10 seconds</td></tr>
+    <tr><td><kbd>↓</kbd> <kbd>↑</kbd></td><td><kbd>↓</kbd> <kbd>↑</kbd></td><td>Back / forward 1 minute</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>←</kbd> <kbd>Ctrl</kbd>+<kbd>→</kbd></td><td><kbd>⌘</kbd><kbd>←</kbd> <kbd>⌘</kbd><kbd>→</kbd></td><td>Previous / next track</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>O</kbd></td><td><kbd>⌘</kbd><kbd>O</kbd></td><td>Open files</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></td><td>File ▸ Open…</td><td>Add folders</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>R</kbd></td><td>File ▸ Open Recent</td><td>Recently opened files, folders and cue sheets</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td><kbd>⌘</kbd><kbd>S</kbd></td><td>Save the playlist as <code>.m3u8</code></td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>L</kbd></td><td><kbd>⌘</kbd><kbd>L</kbd></td><td>Load a playlist (replaces the current one)</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>F</kbd></td><td><kbd>⌘</kbd><kbd>F</kbd></td><td>Search the playlist</td></tr>
+    <tr><td><kbd>Enter</kbd> / <kbd>Esc</kbd></td><td><kbd>Return</kbd> / <kbd>Esc</kbd></td><td>In the filter box: play the first match / clear</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>,</kbd></td><td><kbd>⌘</kbd><kbd>,</kbd></td><td>Settings</td></tr>
+    <tr><td><kbd>F</kbd> or double-click</td><td><kbd>F</kbd> or double-click</td><td>Full screen on/off (<kbd>Esc</kbd> leaves)</td></tr>
+    <tr><td><kbd>V</kbd></td><td><kbd>V</kbd></td><td>Visualiser on/off</td></tr>
+    <tr><td><kbd>]</kbd> <kbd>[</kbd> or <kbd>N</kbd> <kbd>P</kbd></td><td><kbd>]</kbd> <kbd>[</kbd></td><td>Next / previous visualiser preset</td></tr>
+    <tr><td><kbd>L</kbd></td><td><kbd>L</kbd></td><td>Lock / unlock the current preset</td></tr>
+    <tr><td><kbd>U</kbd></td><td><kbd>U</kbd></td><td>Stereo upmix on/off</td></tr>
+    <tr><td><kbd>A</kbd></td><td><kbd>A</kbd></td><td>Next audio track</td></tr>
+    <tr><td><kbd>S</kbd></td><td><kbd>S</kbd></td><td>Subtitles: off → each track → off</td></tr>
+  </table>
+</section>
+
+<!-- ============================ 10 TROUBLESHOOTING ============================ -->
+<section class="chapter">
+  <h2><span class="n">10</span>Troubleshooting</h2>
+
+  <h3>The amp shows PCM or stereo, not Dolby Digital</h3>
+  <ul>
+    <li>Check the TV's digital audio output is set to <b>Pass-through</b> / <b>Auto</b> / <b>Bitstream</b>, not PCM.</li>
+    <li>Check the output device is the TV (HDMI), not the computer's speakers, and that the badge shows <b>DOLBY DIGITAL</b>.
+      If the badge shows PCM, click it to see why.</li>
+    <li>Stereo files play as PCM unless upmix or <i>Also encode stereo sources</i> is on. That is normal.</li>
+  </ul>
+
+  <h3>No sound at all</h3>
+  <ul>
+    <li>Another program may be holding the device in exclusive mode. Close it, or pick the device again.</li>
+    <li>If you use Remote Desktop, the sound goes to "Remote Audio" instead of the TV. Play from the PC itself.</li>
+    <li>In DTS mode, try Dolby Digital: some TVs don't forward DTS.</li>
+  </ul>
+
+  <h3>Loud noise or hiss</h3>
+  <p>This happens when a bitstream reaches something that doesn't decode it, usually a TV set to PCM that forwards the raw
+    data. Set the TV to Pass-through, or choose <b>Off (stereo PCM)</b> in Settings. The player itself never sends a bitstream
+    to analogue speakers or headphones.</p>
+
+  <h3>The sound cuts out briefly between tracks</h3>
+  <p>Many amps need a moment to switch between PCM and Dolby Digital. Turn on <b>Also encode stereo sources</b> (or upmix), so
+    everything is sent as Dolby Digital and the amp never has to switch.</p>
+
+  <h3>Voices are out of sync with lips</h3>
+  <p>Raise <b>Audio latency</b> in Settings until they match, typically 50–150 ms when an amp decodes Dolby Digital.</p>
+
+  <h3>The sound disappears when the TV switches input</h3>
+  <p>The player notices when the device goes away and reopens it when it comes back, at the same position. If it doesn't,
+    choose <b>Refresh Devices</b> in the output menu.</p>
+
+  <h3>Windows asks whether to run the program</h3>
+  <p>That is SmartScreen, because the program isn't code-signed. Choose <b>More info → Run anyway</b>; it asks once per version.</p>
+
+  <h3>Playback stopped with "read error"</h3>
+  <p>The file couldn't be read for several seconds, for example from a sleeping USB drive or a network share. The player tries
+    again on its own (up to three times per track) and stops with this message if the file stays unreadable.</p>
+
+  <div class="box note" style="margin-top:18px"><b class="h">More help</b>The project's <code>README.md</code> explains the audio
+    path in technical detail. Problems and ideas can be reported on the GitHub page:
+    <code>github.com/smithtopher/SurroundPlayer</code>.</div>
+</section>
+
+</body>
+</html>
